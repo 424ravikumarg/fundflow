@@ -1,0 +1,9 @@
+{
+  "name": "Ledgerly",
+  "short_name": "Ledgerly",
+  "description": "Private personal financial dashboard",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F8F9FA",
+  "theme_color": "#6558D3"
+}
