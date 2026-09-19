@@ -4,11 +4,20 @@ import { S3Client, HeadBucketCommand } from '@aws-sdk/client-s3';
 import fs from 'fs';
 import path from 'path';
 
+function cleanEnv(val: string | undefined, fallback: string = ''): string {
+  if (!val) return fallback;
+  return val.trim().replace(/^["']|["']$/g, '');
+}
+
+const s3Region = cleanEnv(process.env.AWS_REGION, 'ap-south-1');
+const s3AccessKey = cleanEnv(process.env.AWS_ACCESS_KEY_ID);
+const s3SecretKey = cleanEnv(process.env.AWS_SECRET_ACCESS_KEY);
+
 const s3Client = new S3Client({
-  region: process.env.AWS_REGION || 'us-east-1',
+  region: s3Region,
   credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+    accessKeyId: s3AccessKey,
+    secretAccessKey: s3SecretKey,
   },
 });
 
@@ -40,6 +49,7 @@ async function ensureSettingsTable(client: any) {
 // 1. GET: Fetch settings and perform health check across RDS, S3, and Local Storage
 export async function GET() {
   let dbStatus = 'disconnected';
+  let dbError = '';
   let s3Status = 'disconnected';
   let localStatus = 'disconnected';
   let baselineNetWorth = 0;
@@ -73,9 +83,10 @@ export async function GET() {
     });
 
     dbStatus = 'connected';
-  } catch (err) {
+  } catch (err: any) {
     console.error('RDS Health Check Failed:', err);
     dbStatus = 'error';
+    dbError = err.message || 'Connection failed';
   } finally {
     if (client) client.release();
   }
@@ -97,8 +108,8 @@ export async function GET() {
   }
 
   // Test S3 Connection
+  const bucketName = cleanEnv(process.env.S3_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME, 'ledgerly-vault');
   try {
-    const bucketName = process.env.AWS_S3_BUCKET_NAME || 'ledgerly-vault';
     await s3Client.send(new HeadBucketCommand({ Bucket: bucketName }));
     s3Status = 'connected';
   } catch (err) {
@@ -117,13 +128,14 @@ export async function GET() {
       rds: {
         status: dbStatus,
         service: 'AWS RDS PostgreSQL',
-        database: process.env.DATABASE_NAME || 'ledgerly',
+        database: cleanEnv(process.env.DATABASE_NAME, 'postgres'),
+        error: dbError || undefined,
       },
       s3: {
         status: s3Status,
         service: 'AWS S3 Cloud Storage',
-        bucket: process.env.AWS_S3_BUCKET_NAME || 'ledgerly-vault',
-        region: process.env.AWS_REGION || 'us-east-1',
+        bucket: bucketName,
+        region: s3Region,
       },
       local: {
         status: localStatus,
@@ -134,7 +146,7 @@ export async function GET() {
   });
 }
 
-// 2. POST: Update settings (baseline_net_worth, currency, storage_destination, local_storage_path)
+// 2. POST: Update settings
 export async function POST(request: Request) {
   let client;
   try {

@@ -7,13 +7,18 @@ types.setTypeParser(1082, (val: string) => val);
 // This prevents Next.js hot-reloads from crashing your database with too many connections
 const globalForPg = global as unknown as { pool: Pool };
 
+const connectionString = (process.env.DATABASE_URL || '')
+  .trim()
+  .replace(/^["']|["']$/g, '');
+
 export const pool =
   globalForPg.pool ||
   new Pool({
-    connectionString: process.env.DATABASE_URL,
+    connectionString,
     ssl: {
       rejectUnauthorized: false, // Required for secure AWS RDS connections
     },
+    connectionTimeoutMillis: 10000,
   });
 
 if (process.env.NODE_ENV !== 'production') globalForPg.pool = pool;

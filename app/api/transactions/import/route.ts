@@ -5,7 +5,8 @@ import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
 import * as XLSX from 'xlsx';
 import mammoth from 'mammoth';
-import { extractText, extractTextItems } from 'unpdf';
+import { getDocumentProxy, extractText, extractTextItems } from 'unpdf';
+import crypto from 'crypto';
 
 interface ExtractedTxn {
   date: string;
@@ -20,12 +21,15 @@ const MONTH_MAP: Record<string, string> = {
   jan: '01', feb: '02', mar: '03', apr: '04',
   may: '05', jun: '06', jul: '07', aug: '08',
   sep: '09', oct: '10', nov: '11', dec: '12',
+  january: '01', february: '02', march: '03', april: '04',
+  june: '06', july: '07', august: '08', september: '09',
+  october: '10', november: '11', december: '12',
 };
 
 const ACRONYM_FIX: Record<string, string> = {
   cred: 'CRED', upi: 'UPI', neft: 'NEFT', imps: 'IMPS', rtgs: 'RTGS',
   gst: 'GST', emi: 'EMI', hdfc: 'HDFC', icici: 'ICICI', sbi: 'SBI',
-  bescom: 'BESCOM', bwssb: 'BWSSB', irctc: 'IRCTC', atm: 'ATM',
+  bescom: 'BESCOM', bwssb: 'BWSSB', irctc: 'IRCTC', atm: 'ATM', axis: 'Axis',
 };
 
 function formatTitleCase(str: string): string {
@@ -35,7 +39,7 @@ function formatTitleCase(str: string): string {
     .split(' ')
     .map((word) => {
       if (!word) return '';
-      const bare = word.replace(/[()]/g, '');
+      const bare = word.replace(/[(),]/g, '');
       const fixed = ACRONYM_FIX[bare];
       const capped = fixed ? word.replace(bare, fixed) : word[0].toUpperCase() + word.slice(1);
       return capped;
@@ -54,7 +58,7 @@ function inferCategoryFromText(text: string): string {
   if (/(amazon|asspl|flipkart|myntra|meesho|ajio|nykaa|tata cliq|zara|h&m|decathlon|retail|mall|store|clothing|apparel|footwear|electronics|croma|vijay sales|shopee|gokwik)/i.test(t)) return 'Shopping';
   if (/(uber|ola|rapido|metro|irctc|makemytrip|goibibo|easemytrip|indigo|air india|fuel|petrol|diesel|shell|indian oil|hpcl|bpcl|fastag|toll|parking|flight|train|bus|cab|taxi|railway|petro)/i.test(t)) return 'Transportation';
   if (/(bescom|bwssb|tata power|adani|airtel|jio|vodafone|vi|act fibernet|broadband|electricity|gas|water|dth|recharge|postpaid|utility|bill|mobpostpaid|fasrecharge)/i.test(t)) return 'Utilities';
-  if (/(apollo|pharmeasy|1mg|netmeds|medplus|hospital|clinic|pharmacy|diagnostics|doctor|dental|health|care|lab|medicine|wellness|pharma)/i.test(t)) return 'Healthcare';
+  if (/(apollo|pharmeasy|1mg|netmeds|medplus|hospital|clinic|pharmacy|diagnostics|doctor|dental|health|care|lab|medicine|wellness|pharma|pain management|infilife)/i.test(t)) return 'Healthcare';
   if (/(zerodha|groww|upstox|angel|coin|kuvera|mutual fund|sip|nse|bse|deposit|loan|emi|insurance|lic|hdfc life|icici pru|sbi life|investment)/i.test(t)) return 'Investments';
   if (/(salary|payroll|stipend|dividend|interest credit|cashback|refund|bonus|reversal)/i.test(t)) return 'Salary & Income';
   if (/(funcity|cinema|pvr|inox|movie|entertainment)/i.test(t)) return 'Entertainment';
@@ -63,33 +67,32 @@ function inferCategoryFromText(text: string): string {
 
 function resolveDate(rawDate: string, defaultYear: number = 2026): string {
   if (!rawDate) return `${defaultYear}-05-01`;
-  const clean = rawDate.trim();
+  const clean = rawDate.replace(/'/g, '').trim();
 
-  // e.g. "23 Jul 26" or "23 Jul 2026"
+  // e.g. "24 Jun 26", "24 Jun '26", "24 Jun 2026"
   const dmyMatch = clean.match(/^(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{2,4})$/i);
   if (dmyMatch) {
     let yr = dmyMatch[3];
     if (yr.length === 2) yr = '20' + yr;
-    const m = MONTH_MAP[dmyMatch[2].slice(0, 3).toLowerCase()] || '01';
+    const m = MONTH_MAP[dmyMatch[2].toLowerCase()] || '01';
     const d = dmyMatch[1].padStart(2, '0');
     return `${yr}-${m}-${d}`;
   }
 
-  // e.g. "Jul 23"
+  // e.g. "July 18" or "Jul 23"
   const monthDayMatch = clean.match(/^([A-Za-z]{3,9})\s+(\d{1,2})$/i);
   if (monthDayMatch) {
-    const month = MONTH_MAP[monthDayMatch[1].slice(0, 3).toLowerCase()] || '05';
+    const month = MONTH_MAP[monthDayMatch[1].toLowerCase()] || '05';
     const day = monthDayMatch[2].padStart(2, '0');
     return `${defaultYear}-${month}-${day}`;
   }
 
   // e.g. "23 Jul"
-  const dayMonthMatch = clean.match(/^(\d{1,2})\s+([A-Za-z]{3,9})(?:\s+(\d{2,4}))?$/i);
+  const dayMonthMatch = clean.match(/^(\d{1,2})\s+([A-Za-z]{3,9})$/i);
   if (dayMonthMatch) {
-    const yr = dayMonthMatch[3] ? parseInt(dayMonthMatch[3]) : defaultYear;
-    const month = MONTH_MAP[dayMonthMatch[2].slice(0, 3).toLowerCase()] || '05';
+    const month = MONTH_MAP[dayMonthMatch[2].toLowerCase()] || '05';
     const day = dayMonthMatch[1].padStart(2, '0');
-    return `${yr}-${month}-${day}`;
+    return `${defaultYear}-${month}-${day}`;
   }
 
   const numMatch = clean.match(/^(\d{1,2})[-/. ](\d{1,2})[-/. ](\d{2,4})$/);
@@ -194,59 +197,214 @@ function parseNarrationDetails(
 }
 
 /**
- * Specialized parser for Credit Card statements (e.g. SBI Card, HDFC, ICICI).
- * Format: 23 Jul 26 ASSPL IN 1,034.00 D  or  30 Jul 26 PAYMENT RECEIVED ... 14,759.00 C
+ * Axis Bank Credit Card Statement Parser
+ * Format: 24 Jun '26 NEXUS PAIN MANAGEMENT,BANGALORE ₹ 45,000.00 Debit
  */
-function parseCreditCardStatementText(fullText: string, defaultSource: string, userRules: any[]): ExtractedTxn[] {
-  const transactions: ExtractedTxn[] = [];
-  const NL = String.fromCharCode(10);
-  const lines = fullText.split(NL).map((l) => l.trim()).filter(Boolean);
+function parseAxisCardStatement(fullText: string, defaultSource: string, userRules: any[]): ExtractedTxn[] {
+  const txns: ExtractedTxn[] = [];
+  const lines = fullText.split(String.fromCharCode(10)).map((l) => l.trim()).filter(Boolean);
 
-  const lineRegex = /^(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{2,4})\s+(.+?)\s+([\d,]+\.\d{2})\s*([CD])$/i;
+  const axisRegex = /^(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+'?\d{2,4})\s+(.+?)\s+(?:[₹]|Rs\.?|INR)?\s*([\d,]+\.\d{2})\s*(Debit|Credit|Dr|Cr|[CD])?$/i;
 
   for (const line of lines) {
-    const m = line.match(lineRegex);
+    if (
+      line.includes('Total Payment Due') ||
+      line.includes('Minimum Payment Due') ||
+      line.includes('Opening Balance') ||
+      line.includes('Credit Limit') ||
+      line.includes('Date Transaction Details') ||
+      line.includes('End of Transaction Summary')
+    ) {
+      continue;
+    }
+
+    const m = line.match(axisRegex);
     if (!m) continue;
 
     const rawDate = m[1];
     let desc = m[2].trim();
-    const rawAmt = m[3].replace(/,/g, '');
-    const indicator = m[4].toUpperCase();
+    const amtStr = m[3].replace(/,/g, '');
+    const indicator = (m[4] || 'Debit').toLowerCase();
 
-    const amount = parseFloat(rawAmt);
-    if (isNaN(amount) || amount <= 0) continue;
+    const amt = parseFloat(amtStr);
+    if (isNaN(amt) || amt <= 0) continue;
 
-    const isCredit = indicator === 'C' || /payment received|reversal|refund|credit/i.test(desc);
-    const type: 'income' | 'expense' = isCredit ? 'income' : 'expense';
+    const isoDate = resolveDate(rawDate);
+    const isCredit = indicator === 'credit' || indicator === 'cr' || indicator === 'c';
 
     let cleanMerchant = desc
-      .replace(/\s+(?:IN|INDIA)$/i, '')
-      .replace(/^UPI-/i, '')
-      .replace(/^PAYMENT RECEIVED.*$/i, 'Payment Received')
+      .replace(/\s*,?\s*(?:BANGALORE|BENGALURU|MUMBAI|DELHI|NOIDA|CHENNAI|HYDERABAD)$/i, '')
+      .replace(/\s+/g, ' ')
       .trim();
 
     cleanMerchant = formatTitleCase(cleanMerchant);
+    const type: 'income' | 'expense' = isCredit ? 'income' : 'expense';
 
     let category = 'General';
     const matchedRule = userRules.find((r) => cleanMerchant.toLowerCase().includes(r.keyword.toLowerCase()));
     if (matchedRule) category = matchedRule.category;
     else category = inferCategoryFromText(cleanMerchant);
 
-    transactions.push({
-      date: resolveDate(rawDate),
+    txns.push({
+      date: isoDate,
       merchant: cleanMerchant,
-      amount: Math.round(amount * 100) / 100,
+      amount: Math.round(amt * 100) / 100,
       type,
       category,
       source: defaultSource,
     });
   }
 
-  return transactions;
+  return txns;
 }
 
 /**
- * 2D Coordinate Engine for Bank Statements (e.g. Standard Chartered).
+ * American Express Credit Card Statement Parser
+ * Format: July 18 RELIANCE RETAIL LTD Mumbai 1,136.99
+ * Credits have CR (either at line end or next line).
+ */
+function parseAmexStatement(fullText: string, defaultSource: string, userRules: any[]): ExtractedTxn[] {
+  const txns: ExtractedTxn[] = [];
+  const lines = fullText.split(String.fromCharCode(10)).map((l) => l.trim()).filter(Boolean);
+
+  let statementYear = 2026;
+  const periodMatch = fullText.match(/Statement Period.*?(\d{4})/i) || fullText.match(/\b(?:19|20)\d{2}\b/);
+  if (periodMatch) statementYear = parseInt(periodMatch[1] || periodMatch[0]);
+
+  const amexRegex = /^(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})\s+(.+?)\s+([\d,]+\.\d{2})\s*(CR)?$/i;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (
+      line.includes('Opening Balance') ||
+      line.includes('Closing Balance') ||
+      line.includes('Minimum Payment') ||
+      line.includes('New Debits') ||
+      line.includes('New Credits') ||
+      line.includes('New domestic transactions') ||
+      line.includes('Foreign Spending') ||
+      line.includes('Interest on Rs') ||
+      line.includes('purchase on')
+    ) {
+      continue;
+    }
+
+    const m = line.match(amexRegex);
+    if (!m) continue;
+
+    const monthStr = m[1];
+    const dayStr = m[2];
+    let desc = m[3].trim();
+    const amtStr = m[4].replace(/,/g, '');
+    let isCR = Boolean(m[5]);
+
+    if (!isCR && i + 1 < lines.length) {
+      const nextLine = lines[i + 1];
+      if (/^CR$/i.test(nextLine) || /\bCR$/i.test(nextLine)) {
+        isCR = true;
+      }
+    }
+
+    const amt = parseFloat(amtStr);
+    if (isNaN(amt) || amt <= 0) continue;
+
+    const month = MONTH_MAP[monthStr.toLowerCase()] || '01';
+    const day = dayStr.padStart(2, '0');
+    const isoDate = `${statementYear}-${month}-${day}`;
+
+    let cleanMerchant = desc
+      .replace(/^(?:Paytm\*|PayU\*|RBL\*|SBIP\*|Billdesk\*|ESPY\*)/i, '')
+      .replace(/\s+(?:Mumbai|BANGALORE|BENGALURU|Noida|Mumbai Suburban|BENGALURU URB|MUM)$/i, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    cleanMerchant = formatTitleCase(cleanMerchant);
+    const type: 'income' | 'expense' = isCR || /payment received/i.test(desc) ? 'income' : 'expense';
+
+    let category = 'General';
+    const matchedRule = userRules.find((r) => cleanMerchant.toLowerCase().includes(r.keyword.toLowerCase()));
+    if (matchedRule) category = matchedRule.category;
+    else category = inferCategoryFromText(cleanMerchant);
+
+    txns.push({
+      date: isoDate,
+      merchant: cleanMerchant,
+      amount: Math.round(amt * 100) / 100,
+      type,
+      category,
+      source: defaultSource,
+    });
+  }
+
+  return txns;
+}
+
+/**
+ * SBI Card & Credit Card Statement Parser
+ * Format: 23 Jul 26 ASSPL IN 1,034.00 D  or  30 Jul 26 PAYMENT RECEIVED ... 14,759.00 C
+ */
+function parseSBICardStatement(fullText: string, defaultSource: string, userRules: any[]): ExtractedTxn[] {
+  const txns: ExtractedTxn[] = [];
+  const lines = fullText.split(String.fromCharCode(10)).map((l) => l.trim()).filter(Boolean);
+
+  const sbiRegex = /^(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{2,4})\s+(.+?)\s+(?:([CD])\s+)?([\d,]+\.\d{2})\s*([CD])?$/i;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (
+      line.includes('Statement Period') ||
+      line.includes('Important Messages') ||
+      line.includes('Reward Points') ||
+      line.includes('Total Amount Due') ||
+      line.includes('SAVINGS AND BENEFITS')
+    ) {
+      continue;
+    }
+
+    const m = line.match(sbiRegex);
+    if (!m) continue;
+
+    const rawDate = m[1];
+    let desc = m[2].trim();
+    const indicator = (m[5] || m[3] || 'D').toUpperCase();
+    const amtStr = (m[4] || '').replace(/,/g, '');
+
+    const amt = parseFloat(amtStr);
+    if (isNaN(amt) || amt <= 0) continue;
+
+    const isoDate = resolveDate(rawDate);
+    const isCredit = indicator === 'C' || /payment received|reversal|refund/i.test(desc);
+
+    let cleanMerchant = desc
+      .replace(/^(?:UPI-|UPI\/)/i, '')
+      .replace(/\s+(?:IN|INDIA)$/i, '')
+      .replace(/^PAYMENT RECEIVED.*$/i, 'Payment Received')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    cleanMerchant = formatTitleCase(cleanMerchant);
+    const type: 'income' | 'expense' = isCredit ? 'income' : 'expense';
+
+    let category = 'General';
+    const matchedRule = userRules.find((r) => cleanMerchant.toLowerCase().includes(r.keyword.toLowerCase()));
+    if (matchedRule) category = matchedRule.category;
+    else category = inferCategoryFromText(cleanMerchant);
+
+    txns.push({
+      date: isoDate,
+      merchant: cleanMerchant,
+      amount: Math.round(amt * 100) / 100,
+      type,
+      category,
+      source: defaultSource,
+    });
+  }
+
+  return txns;
+}
+
+/**
+ * 2D Coordinate Engine for Bank Statements (e.g. Standard Chartered, HDFC, etc.)
  */
 function parsePDFPageCoordinates(
   pageItems: Array<{ str: string; x: number; y: number; width: number; height: number }>,
@@ -386,9 +544,8 @@ function parsePDFPageCoordinates(
 function parseUniversalCSV(fullText: string, defaultSource: string, userRules: any[]): ExtractedTxn[] {
   const results: ExtractedTxn[] = [];
   const statementYear = 2026;
-  const NL = String.fromCharCode(10);
 
-  const lines = fullText.split(NL).map((l) => l.trim()).filter(Boolean);
+  const lines = fullText.split(String.fromCharCode(10)).map((l) => l.trim()).filter(Boolean);
   const amountPattern = /\b\d{1,3}(?:,\d{3})*(?:\.\d{2})\b/g;
 
   for (const line of lines) {
@@ -431,6 +588,7 @@ export async function POST(request: Request) {
     const file = formData.get('file') as File | null;
     if (!file) return NextResponse.json({ error: 'No file provided' }, { status: 400 });
 
+    const password = (formData.get('password') as string | null) || undefined;
     const filename = file.name;
     const extension = filename.split('.').pop()?.toLowerCase() || '';
     const bytes = await file.arrayBuffer();
@@ -467,24 +625,54 @@ export async function POST(request: Request) {
     const NL = String.fromCharCode(10);
 
     if (extension === 'pdf') {
-      // Always pass fresh cloned buffers to unpdf functions to prevent ArrayBuffer detachment
-      const copy1 = new Uint8Array(buffer.slice(0));
-      const { text } = await extractText(copy1);
-      const fullText = Array.isArray(text) ? text.join(NL) : String(text || '');
-
-      // Check if this is a credit card statement (e.g. SBI Card, HDFC Credit Card)
-      if (/SBI Card|Credit Card|Card Statement|Statement Period/i.test(fullText)) {
-        const cardTxns = parseCreditCardStatementText(fullText, sourceLabel, userRules);
-        if (cardTxns.length > 0) {
-          extractedTransactions.push(...cardTxns);
+      let doc;
+      try {
+        doc = await getDocumentProxy(new Uint8Array(buffer.slice(0)), password ? { password } : undefined);
+      } catch (pdfErr: any) {
+        if (pdfErr?.name === 'PasswordException' || /password/i.test(pdfErr?.message || '')) {
+          const isIncorrect = /incorrect/i.test(pdfErr?.message || '');
+          return NextResponse.json(
+            {
+              error: isIncorrect
+                ? 'Incorrect password. Please try again.'
+                : 'This statement is password-protected. Please enter the password.',
+              requiresPassword: true,
+              incorrectPassword: isIncorrect,
+            },
+            { status: 401 }
+          );
         }
+        throw pdfErr;
       }
 
-      // If not parsed as credit card, run 2D coordinate parser for bank statements (e.g. Standard Chartered)
+      const { text } = await extractText(doc);
+      const fullText = Array.isArray(text) ? text.join(NL) : String(text || '');
+
+      // 1. Axis Bank Credit Card
+      if (/Axis Bank|AXISMB|Axis/i.test(fullText) || /NEXUS PAIN|Debit\/Credit/i.test(fullText)) {
+        extractedTransactions = parseAxisCardStatement(fullText, 'Axis Bank', userRules);
+      }
+
+      // 2. American Express Credit Card
+      if (
+        extractedTransactions.length === 0 &&
+        (/American Express|americanexpress\.co\.in|AEBC/i.test(fullText) || /Foreign Spending/i.test(fullText))
+      ) {
+        extractedTransactions = parseAmexStatement(fullText, 'American Express', userRules);
+      }
+
+      // 3. SBI Card or statements with trailing [CD] amounts
+      if (
+        extractedTransactions.length === 0 &&
+        (/SBI Card|Statement Period/i.test(fullText) || /[\d,]+\.\d{2}\s+[CD]\b/i.test(fullText))
+      ) {
+        extractedTransactions = parseSBICardStatement(fullText, 'SBI Card', userRules);
+      }
+
+      // 4. 2D Coordinate Engine for Bank Statements (Standard Chartered, etc.)
       if (extractedTransactions.length === 0) {
         try {
-          const copy2 = new Uint8Array(buffer.slice(0));
-          const { items } = await extractTextItems(copy2);
+          const { items } = await extractTextItems(doc);
           if (Array.isArray(items) && items.length > 0) {
             for (const pageItems of items) {
               const pageTxns = parsePDFPageCoordinates(pageItems, sourceLabel, userRules);
@@ -494,6 +682,17 @@ export async function POST(request: Request) {
         } catch (coordErr) {
           console.warn('Coordinate parser notice:', coordErr);
         }
+      }
+
+      // 5. Fallbacks: Try all parsers in sequence if coordinate engine returned 0
+      if (extractedTransactions.length === 0) {
+        extractedTransactions = parseAxisCardStatement(fullText, 'Axis Bank', userRules);
+      }
+      if (extractedTransactions.length === 0) {
+        extractedTransactions = parseAmexStatement(fullText, 'American Express', userRules);
+      }
+      if (extractedTransactions.length === 0) {
+        extractedTransactions = parseSBICardStatement(fullText, 'SBI Card', userRules);
       }
     } else if (['xlsx', 'xls', 'csv'].includes(extension)) {
       const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: false });
@@ -516,19 +715,35 @@ export async function POST(request: Request) {
     let insertedCount = 0;
     for (const t of extractedTransactions) {
       const id = crypto.randomUUID();
-      const fingerprint = crypto.randomUUID();
-      await client.query(
-        `INSERT INTO transactions (id, amount, merchant, source, category, date, type, fingerprint)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [id, t.amount, t.merchant, t.source, t.category, t.date, t.type, fingerprint]
+      const fingerprint = crypto.createHash('sha256')
+        .update(`${t.date}_${t.amount}_${t.type}_${t.merchant.toLowerCase()}`)
+        .digest('hex');
+
+      // Avoid inserting exact duplicate transactions if already present
+      const dupCheck = await client.query(
+        `SELECT 1 FROM transactions WHERE fingerprint = $1 OR (date = $2 AND amount = $3 AND type = $4 AND LOWER(merchant) = LOWER($5)) LIMIT 1`,
+        [fingerprint, t.date, t.amount, t.type, t.merchant]
       );
-      insertedCount++;
+
+      if (dupCheck.rows.length === 0) {
+        await client.query(
+          `INSERT INTO transactions (id, amount, merchant, source, category, date, type, fingerprint)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [id, t.amount, t.merchant, t.source, t.category, t.date, t.type, fingerprint]
+        );
+        insertedCount++;
+      }
     }
 
     return NextResponse.json({
       success: true,
       count: insertedCount,
+      totalParsed: extractedTransactions.length,
       filename,
+      message:
+        insertedCount === extractedTransactions.length
+          ? `Successfully imported all ${insertedCount} transactions.`
+          : `Imported ${insertedCount} new transaction(s) (${extractedTransactions.length - insertedCount} existing duplicates skipped).`,
       transactions: extractedTransactions.slice(0, 5),
     });
   } catch (err: any) {

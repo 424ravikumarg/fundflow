@@ -1,0 +1,158 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  AWS CloudFormation Template for Fundflow Personal Finance & Statement Engine
+  Deploys an EC2 Instance running Red Hat Enterprise Linux 9 with Node.js 20 LTS,
+  Nginx Reverse Proxy, Systemd Process Management, and SELinux.
+
+Parameters:
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of an existing EC2 KeyPair for SSH access
+    ConstraintDescription: Must be the name of an existing EC2 KeyPair.
+
+  InstanceType:
+    Type: String
+    Default: t3.medium
+    AllowedValues:
+      - t3.small
+      - t3.medium
+      - t3.large
+      - t4g.medium
+      - t4g.large
+    Description: EC2 instance type (t3.medium or larger recommended for Next.js build)
+
+  VpcId:
+    Type: String
+    Default: ''
+    Description: '(Optional) Custom VPC ID to deploy into (e.g., vpc-0123456789abcdef0). Leave blank to use your default VPC.'
+
+  SSHLocation:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: The IP address range that can be used to SSH to the EC2 instance
+
+Conditions:
+  HasVpcId: !Not [!Equals [!Ref VpcId, '']]
+
+Mappings:
+  # Official Red Hat Enterprise Linux 9 x86_64 AMIs
+  RegionMap:
+    ap-south-1:
+      AMI: ami-001b087fae6b102a2  # Official Red Hat Enterprise Linux 9 (Mumbai)
+    us-east-1:
+      AMI: ami-0fe630eb857a6ec83  # US East (N. Virginia)
+    us-east-2:
+      AMI: ami-036841078a4b68e14  # US East (Ohio)
+    us-west-2:
+      AMI: ami-02b92c281a4d3dc79  # US West (Oregon)
+    eu-west-1:
+      AMI: ami-0136ddddd07f0534f  # Europe (Ireland)
+    eu-central-1:
+      AMI: ami-0c93542b963ec7690  # Europe (Frankfurt)
+    ap-southeast-1:
+      AMI: ami-07a6e3b1c102cdba8  # Asia Pacific (Singapore)
+
+Resources:
+  FundflowSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Fundflow Web Server (HTTP, HTTPS, SSH)
+      VpcId: !If [HasVpcId, !Ref VpcId, !Ref 'AWS::NoValue']
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: Inbound HTTP from anywhere
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: Inbound HTTPS from anywhere
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SSHLocation
+          Description: Inbound SSH access
+      # SecurityGroupEgress is omitted so AWS adds the default allow-all outbound rule (0.0.0.0/0)
+      Tags:
+        - Key: Name
+          Value: Fundflow-SG
+
+  FundflowInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: FundflowS3BucketAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                  - s3:DeleteObject
+                Resource:
+                  - arn:aws:s3:::ledgerly-vault
+                  - arn:aws:s3:::ledgerly-vault/*
+
+  FundflowInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref FundflowInstanceRole
+
+  FundflowEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', AMI]
+      IamInstanceProfile: !Ref FundflowInstanceProfile
+      SecurityGroupIds:
+        - !Ref FundflowSecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: Fundflow-RHEL-Server
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          # Minimal, non-blocking bootstrap to ensure SSH daemon is completely untouched
+          mkdir -p /opt/fundflow
+          chown -R ec2-user:ec2-user /opt/fundflow
+          echo "Fundflow instance ready for deployment." > /var/log/fundflow-init.log
+
+Outputs:
+  InstanceId:
+    Description: InstanceId of the newly created RHEL EC2 instance
+    Value: !Ref FundflowEC2Instance
+
+  PublicIP:
+    Description: Public IP address of the Fundflow RHEL server
+    Value: !GetAtt FundflowEC2Instance.PublicIp
+
+  PublicDNS:
+    Description: Public DNS of the Fundflow RHEL server
+    Value: !GetAtt FundflowEC2Instance.PublicDnsName
+
+  WebsiteURL:
+    Description: Web access URL
+    Value: !Sub 'http://${FundflowEC2Instance.PublicIp}'
