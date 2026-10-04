@@ -89,25 +89,33 @@ jobs:
           HOST: ${{ secrets.EC2_HOST }}
           USERNAME: ${{ secrets.EC2_USER }}
           SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          SSH_PASSWORD: ${{ secrets.EC2_SSH_PASSWORD }}
         run: |
           # 1. Validate secrets exist
-          if [ -z "$HOST" ] || [ -z "$USERNAME" ] || [ -z "$SSH_KEY" ]; then
-            echo "::error::One or more required secrets are missing!"
-            echo "Please verify in GitHub -> Settings -> Secrets and variables -> Actions that these secrets exist:"
-            echo "  - EC2_HOST (e.g. 65.1.148.197)"
-            echo "  - EC2_USER (e.g. ec2-user or root)"
-            echo "  - EC2_SSH_KEY (full private key including BEGIN and END lines)"
+          if [ -z "$HOST" ] || [ -z "$USERNAME" ]; then
+            echo "::error::EC2_HOST and EC2_USER must be set in GitHub repository secrets!"
             exit 1
           fi
 
-          # 2. Configure SSH private key
-          mkdir -p ~/.ssh
-          echo "$SSH_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
+          if [ -z "$SSH_KEY" ] && [ -z "$SSH_PASSWORD" ]; then
+            echo "::error::Either EC2_SSH_KEY or EC2_SSH_PASSWORD must be set in GitHub repository secrets!"
+            exit 1
+          fi
+
+          # 2. Configure SSH Command (Key-based or Password-based)
+          if [ -n "$SSH_KEY" ]; then
+            mkdir -p ~/.ssh
+            echo "$SSH_KEY" > ~/.ssh/deploy_key
+            chmod 600 ~/.ssh/deploy_key
+            SSH_CMD="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 -i /home/runner/.ssh/deploy_key"
+          else
+            sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+            SSH_CMD="sshpass -p $SSH_PASSWORD ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15"
+          fi
 
           # 3. Connect and execute deployment
           echo ">>> Connecting to AWS EC2 instance at $HOST as $USERNAME..."
-          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 -i ~/.ssh/deploy_key "$USERNAME@$HOST" << 'EOF'
+          $SSH_CMD "$USERNAME@$HOST" << 'EOF'
             set -e
             echo ">>> Connected successfully! Deploying Fundflow..."
             cd /opt/fundflow
