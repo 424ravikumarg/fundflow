@@ -85,18 +85,34 @@ jobs:
 
     steps:
       - name: Execute Remote Deploy on AWS EC2
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          port: 22
-          script_stop: true
-          script: |
-            echo ">>> Deploying Fundflow to Production Server..."
+        env:
+          HOST: ${{ secrets.EC2_HOST }}
+          USERNAME: ${{ secrets.EC2_USER }}
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          # 1. Validate secrets exist
+          if [ -z "$HOST" ] || [ -z "$USERNAME" ] || [ -z "$SSH_KEY" ]; then
+            echo "::error::One or more required secrets are missing!"
+            echo "Please verify in GitHub -> Settings -> Secrets and variables -> Actions that these secrets exist:"
+            echo "  - EC2_HOST (e.g. 65.1.148.197)"
+            echo "  - EC2_USER (e.g. ec2-user or root)"
+            echo "  - EC2_SSH_KEY (full private key including BEGIN and END lines)"
+            exit 1
+          fi
+
+          # 2. Configure SSH private key
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          # 3. Connect and execute deployment
+          echo ">>> Connecting to AWS EC2 instance at $HOST as $USERNAME..."
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 -i ~/.ssh/deploy_key "$USERNAME@$HOST" << 'EOF'
+            set -e
+            echo ">>> Connected successfully! Deploying Fundflow..."
             cd /opt/fundflow
 
-            # Ensure git safe directory is configured
+            # Ensure git safe directory
             git config --global --add safe.directory /opt/fundflow 2>/dev/null || true
 
             # Pull latest changes from origin main
@@ -120,6 +136,8 @@ jobs:
             # Verify container status
             sleep 3
             docker ps --filter "name=fundflow"
+            echo ">>> Deployment completed successfully on server!"
+          EOF
 
       - name: Generate Production Deployment Summary
         run: |
