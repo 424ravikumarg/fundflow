@@ -15,7 +15,7 @@
 * **Global Currency Selection**: Choose from 10 major global currencies (USD `$`, INR `₹`, EUR `€`, GBP `£`, CAD `CA$`, AUD `A$`, JPY `¥`, etc.) with instant database and UI synchronization.
 
 ---
-
+Ravi
 ## 🚀 Getting Started
 
 First, run the development server:
