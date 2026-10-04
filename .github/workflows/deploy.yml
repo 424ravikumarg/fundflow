@@ -1,0 +1,131 @@
+name: Fundflow CI/CD Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target Environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
+
+jobs:
+  # -------------------------------------------------------------
+  # Job 1: Build & Type-Check Validation (Runs for both dev & prod)
+  # -------------------------------------------------------------
+  validate-and-build:
+    name: Validate & Build Next.js App
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Type-Check (TypeScript)
+        run: npx tsc --noEmit
+
+      - name: Test Production Build
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: 1
+
+  # -------------------------------------------------------------
+  # Job 2: Dev Environment (Localhost verification & links)
+  # -------------------------------------------------------------
+  dev-environment:
+    name: Dev Verification & Localhost Preview
+    needs: validate-and-build
+    if: ${{ github.event.inputs.environment == 'dev' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Generate Dev Summary & Localhost Instructions
+        run: |
+          echo "## 🛠️ Dev Environment Build Verified!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The latest code on branch \`${{ github.ref_name }}\` passed all type-checks and production build validations successfully." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 💻 How to View Features on Your Laptop:" >> $GITHUB_STEP_SUMMARY
+          echo "Because GitHub Actions executes on GitHub's cloud runners, \`localhost\` runs locally on your Mac." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "1. **Pull the latest code on your Mac:**" >> $GITHUB_STEP_SUMMARY
+          echo "   \`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "   cd /Users/ravimouni/fundflow" >> $GITHUB_STEP_SUMMARY
+          echo "   git pull origin ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "   \`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "2. **Start the local development server:**" >> $GITHUB_STEP_SUMMARY
+          echo "   \`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "   npm run dev" >> $GITHUB_STEP_SUMMARY
+          echo "   \`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "3. **Click the localhost link to view your application:**" >> $GITHUB_STEP_SUMMARY
+          echo "   👉 **[http://localhost:3000](http://localhost:3000)**" >> $GITHUB_STEP_SUMMARY
+
+  # -------------------------------------------------------------
+  # Job 3: Production Deploy (Deploys to AWS Server)
+  # -------------------------------------------------------------
+  prod-deploy:
+    name: Deploy to Production AWS Server
+    needs: validate-and-build
+    if: ${{ github.event.inputs.environment == 'prod' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Execute Remote Deploy on AWS EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          script_stop: true
+          script: |
+            echo ">>> Deploying Fundflow to Production Server..."
+            cd /opt/fundflow
+
+            # Ensure git safe directory is configured
+            git config --global --add safe.directory /opt/fundflow 2>/dev/null || true
+
+            # Pull latest changes from origin main
+            git fetch origin main
+            git reset --hard origin/main
+
+            # Build Docker container with updated code
+            docker build -t fundflow .
+
+            # Restart container with persistent storage and environment configuration
+            docker stop fundflow || true
+            docker rm fundflow || true
+            docker run -d \
+              --name fundflow \
+              --restart always \
+              -p 127.0.0.1:3000:3000 \
+              -v /opt/fundflow/storage:/app/storage \
+              --env-file /opt/fundflow/.env.local \
+              fundflow
+
+            # Verify container status
+            sleep 3
+            docker ps --filter "name=fundflow"
+
+      - name: Generate Production Deployment Summary
+        run: |
+          echo "## 🚀 Production Deployment Successful!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Fundflow has been updated and restarted on your AWS server." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🌐 Live Application Link:" >> $GITHUB_STEP_SUMMARY
+          echo "👉 **[http://${{ secrets.EC2_HOST }}](http://${{ secrets.EC2_HOST }})**" >> $GITHUB_STEP_SUMMARY
