@@ -90,6 +90,8 @@ jobs:
           USERNAME: ${{ secrets.EC2_USER }}
           SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
           SSH_PASSWORD: ${{ secrets.EC2_SSH_PASSWORD }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
         run: |
           # 1. Validate secrets exist
           if [ -z "$HOST" ] || [ -z "$USERNAME" ]; then
@@ -103,11 +105,11 @@ jobs:
           fi
 
           # 2. Configure SSH Command (Key-based or Password-based)
+          mkdir -p ~/.ssh
           if [ -n "$SSH_KEY" ]; then
-            mkdir -p ~/.ssh
-            echo "$SSH_KEY" > ~/.ssh/deploy_key
+            printf "%s\n" "$SSH_KEY" > ~/.ssh/deploy_key
             chmod 600 ~/.ssh/deploy_key
-            SSH_CMD="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 -i /home/runner/.ssh/deploy_key"
+            SSH_CMD="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 -i ~/.ssh/deploy_key"
           else
             sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
             SSH_CMD="sshpass -p $SSH_PASSWORD ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15"
@@ -115,7 +117,7 @@ jobs:
 
           # 3. Connect and execute deployment
           echo ">>> Connecting to AWS EC2 instance at $HOST as $USERNAME..."
-          $SSH_CMD "$USERNAME@$HOST" << 'EOF'
+          $SSH_CMD "$USERNAME@$HOST" << EOF
             set -e
             echo ">>> Connected successfully! Deploying Fundflow..."
             cd /opt/fundflow
@@ -123,17 +125,26 @@ jobs:
             # Ensure git safe directory
             git config --global --add safe.directory /opt/fundflow 2>/dev/null || true
 
-            # Pull latest changes from origin main
+            # Pull latest changes using GitHub token authentication (works for private repos)
+            git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
             git fetch origin main
             git reset --hard origin/main
+            git remote set-url origin "https://github.com/${REPO}.git"
+
+            # Check if current user needs sudo for docker
+            if command -v sudo &>/dev/null && [ "\$EUID" -ne 0 ]; then
+              DOCKER_BIN="sudo docker"
+            else
+              DOCKER_BIN="docker"
+            fi
 
             # Build Docker container with updated code
-            docker build -t fundflow .
+            \$DOCKER_BIN build -t fundflow .
 
             # Restart container with persistent storage and environment configuration
-            docker stop fundflow || true
-            docker rm fundflow || true
-            docker run -d \
+            \$DOCKER_BIN stop fundflow || true
+            \$DOCKER_BIN rm fundflow || true
+            \$DOCKER_BIN run -d \
               --name fundflow \
               --restart always \
               -p 127.0.0.1:3000:3000 \
@@ -143,9 +154,9 @@ jobs:
 
             # Verify container status
             sleep 3
-            docker ps --filter "name=fundflow"
+            \$DOCKER_BIN ps --filter "name=fundflow"
             echo ">>> Deployment completed successfully on server!"
-          EOF
+EOF
 
       - name: Generate Production Deployment Summary
         run: |
