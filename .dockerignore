@@ -5,3 +5,10 @@ node_modules
 *.pem
 deploy
 aws
+*.pkg
+*.zip
+*.tar.gz
+storage
+.DS_Store
+*.log
+

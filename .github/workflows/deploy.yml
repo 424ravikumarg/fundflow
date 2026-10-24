@@ -95,6 +95,13 @@ jobs:
           git reset --hard origin/main
           git remote set-url origin "https://github.com/__REPO__.git"
 
+          # Remove untracked large archives or installer files if present
+          rm -f AWSCLIV2.pkg *.zip *.tar.gz 2>/dev/null || true
+
+          # Clean up build cache and unused docker objects to guarantee free disk space
+          docker builder prune -af 2>/dev/null || true
+          docker image prune -f 2>/dev/null || true
+
           docker build -t fundflow .
           docker stop fundflow || true
           docker rm fundflow || true
@@ -105,6 +112,9 @@ jobs:
             -v /opt/fundflow/storage:/app/storage \
             --env-file /opt/fundflow/.env.local \
             fundflow
+
+          # Clean up dangling images created during build
+          docker image prune -f 2>/dev/null || true
 
           sleep 3
           docker ps --filter "name=fundflow"

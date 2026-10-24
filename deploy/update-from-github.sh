@@ -25,8 +25,13 @@ git fetch origin main
 git checkout -B main
 git reset --hard origin/main
 
-# 2. Rebuild Docker image with latest code
-echo ">>> [2/4] Rebuilding Docker image..."
+# Remove untracked large archives or installer files if present
+rm -f AWSCLIV2.pkg *.zip *.tar.gz 2>/dev/null || true
+
+# 2. Prune old build cache & rebuild Docker image with latest code
+echo ">>> [2/4] Cleaning build cache and rebuilding Docker image..."
+docker builder prune -af 2>/dev/null || true
+docker image prune -f 2>/dev/null || true
 docker build -t fundflow .
 
 # 3. Stop and replace running container
