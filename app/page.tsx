@@ -17,6 +17,7 @@ import {
 } from "recharts";
 import AddEntryModal from "./components/AddEntryModal";
 import { useCurrency } from "./context/CurrencyContext";
+import { useTimeframe } from "./context/TimeframeContext";
 
 interface Transaction {
   id: string;
@@ -92,7 +93,7 @@ export default function DashboardPage() {
   const [loans, setLoans] = useState<Loan[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [baselineNetWorth, setBaselineNetWorth] = useState(0);
-  const [timeframe, setTimeframe] = useState<"this_month" | "last_month" | "all_time" | "this_year">("this_month");
+  const { timeframe, setTimeframe } = useTimeframe();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
 

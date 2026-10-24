@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import AddEntryModal, { TransactionFormData } from "../components/AddEntryModal";
 import ImportCsvModal from "../components/ImportCsvModal";
 import { useCurrency } from "../context/CurrencyContext";
+import { useTimeframe } from "../context/TimeframeContext";
 
 interface Transaction {
   id: string;
@@ -60,7 +61,7 @@ export default function TransactionsPage() {
   const [isFilesModalOpen, setIsFilesModalOpen] = useState(false);
   const [filterCategory, setFilterCategory] = useState("all");
   const [search, setSearch] = useState("");
-  const [timeframe, setTimeframe] = useState<"all_time" | "this_month" | "last_month" | "this_year">("all_time");
+  const { timeframe, setTimeframe } = useTimeframe();
   const [renamingFile, setRenamingFile] = useState<ImportedFile | null>(null);
   const [newFileName, setNewFileName] = useState("");
   const [isRenamingFile, setIsRenamingFile] = useState(false);
