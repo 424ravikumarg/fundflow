@@ -434,7 +434,7 @@ export default function DashboardPage() {
               <button
                 key={tab.id}
                 onClick={() => setTimeframe(tab.id as any)}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition cursor-pointer ${
+                className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition cursor-pointer whitespace-nowrap ${
                   timeframe === tab.id
                     ? "bg-[#6558D3] text-white shadow-2xs"
                     : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
@@ -447,83 +447,105 @@ export default function DashboardPage() {
 
           <Link
             href="/assets"
-            className="border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-2xl text-xs font-semibold transition shadow-2xs flex items-center gap-1.5"
+            className="border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-2xl text-xs font-semibold transition shadow-2xs flex items-center gap-1.5 whitespace-nowrap"
           >
             <span>📈</span> Assets & SIP
           </Link>
           <Link
             href="/loans"
-            className="border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-2xl text-xs font-semibold transition shadow-2xs flex items-center gap-1.5"
+            className="border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-2xl text-xs font-semibold transition shadow-2xs flex items-center gap-1.5 whitespace-nowrap"
           >
             <span>🏦</span> Loans
           </Link>
           <button
             onClick={() => setIsModalOpen(true)}
-            className="bg-[#6558D3] hover:bg-[#5244bd] text-white px-4 py-2 rounded-2xl text-xs font-semibold transition-colors shadow-sm cursor-pointer"
+            className="bg-[#6558D3] hover:bg-[#5244bd] text-white px-4 py-2 rounded-2xl text-xs font-semibold transition-colors shadow-sm cursor-pointer whitespace-nowrap"
           >
             + Add entry
           </button>
         </div>
       </div>
 
-      {/* Summary KPI Cards Grid (5-column layout on desktop) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+      {/* Summary KPI Cards Grid (Responsive across all window sizes) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
         {/* Net Worth (Incorporating Assets) */}
-        <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 flex flex-col justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Total Net Worth</p>
-            <p className="text-2xl lg:text-3xl font-bold text-gray-900 mt-2">{formatCurrency(netWorth)}</p>
+        <div className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 flex flex-col justify-between min-w-0 overflow-hidden">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 truncate">Total Net Worth</p>
+            <p
+              className="text-lg sm:text-xl xl:text-[21px] 2xl:text-2xl font-bold text-gray-900 mt-2 whitespace-nowrap tabular-nums tracking-tight truncate"
+              title={formatCurrency(netWorth)}
+            >
+              {formatCurrency(netWorth)}
+            </p>
           </div>
-          <p className="text-xs text-[#6558D3] font-medium mt-3">Assets + Cash − Debts</p>
+          <p className="text-xs text-[#6558D3] font-medium mt-3 truncate">Assets + Cash − Debts</p>
         </div>
 
         {/* Inflows for Timeframe */}
-        <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 flex flex-col justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+        <div className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 flex flex-col justify-between min-w-0 overflow-hidden">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 truncate">
               {timeframe === "this_month" ? "This Month's Inflows" : "Selected Inflows"}
             </p>
-            <p className="text-2xl lg:text-3xl font-bold text-emerald-600 mt-2">{formatCurrency(timeframeIncome)}</p>
+            <p
+              className="text-lg sm:text-xl xl:text-[21px] 2xl:text-2xl font-bold text-emerald-600 mt-2 whitespace-nowrap tabular-nums tracking-tight truncate"
+              title={formatCurrency(timeframeIncome)}
+            >
+              {formatCurrency(timeframeIncome)}
+            </p>
           </div>
-          <p className="text-xs text-gray-400 font-medium mt-3">Income & deposits</p>
+          <p className="text-xs text-gray-400 font-medium mt-3 truncate">Income & deposits</p>
         </div>
 
         {/* Spending for Timeframe */}
-        <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 flex flex-col justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+        <div className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 flex flex-col justify-between min-w-0 overflow-hidden">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 truncate">
               {timeframe === "this_month" ? "This Month's Spending" : "Selected Spending"}
             </p>
-            <p className="text-2xl lg:text-3xl font-bold text-gray-900 mt-2">{formatCurrency(timeframeSpending)}</p>
+            <p
+              className="text-lg sm:text-xl xl:text-[21px] 2xl:text-2xl font-bold text-gray-900 mt-2 whitespace-nowrap tabular-nums tracking-tight truncate"
+              title={formatCurrency(timeframeSpending)}
+            >
+              {formatCurrency(timeframeSpending)}
+            </p>
           </div>
-          <p className="text-xs text-gray-500 font-medium mt-3">
+          <p className="text-xs text-gray-500 font-medium mt-3 break-words">
             {formatCurrency(timeframeOneTimeExpenses)} one-time + {formatCurrency(totalMonthlyFixedObligations)} fixed
           </p>
         </div>
 
         {/* Loan Liabilities */}
-        <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 flex flex-col justify-between">
-          <div>
-            <div className="flex justify-between items-center">
-              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Loan Liabilities</p>
-              <Link href="/loans" className="text-[10px] text-[#6558D3] font-bold hover:underline">
+        <div className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 flex flex-col justify-between min-w-0 overflow-hidden">
+          <div className="min-w-0">
+            <div className="flex justify-between items-center gap-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 truncate">Loan Liabilities</p>
+              <Link href="/loans" className="text-[10px] text-[#6558D3] font-bold hover:underline whitespace-nowrap shrink-0">
                 View →
               </Link>
             </div>
-            <p className="text-2xl lg:text-3xl font-bold text-rose-600 mt-2">{formatCurrency(totalBorrowedDebt)}</p>
+            <p
+              className="text-lg sm:text-xl xl:text-[21px] 2xl:text-2xl font-bold text-rose-600 mt-2 whitespace-nowrap tabular-nums tracking-tight truncate"
+              title={formatCurrency(totalBorrowedDebt)}
+            >
+              {formatCurrency(totalBorrowedDebt)}
+            </p>
           </div>
-          <p className="text-xs text-gray-500 font-medium mt-3">
+          <p className="text-xs text-gray-500 font-medium mt-3 truncate">
             {totalMonthlyLoanEmis > 0 ? `${formatCurrency(totalMonthlyLoanEmis)}/mo EMI` : "No active debt"}
           </p>
         </div>
 
         {/* Savings Rate */}
-        <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 flex flex-col justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Savings Rate</p>
-            <p className="text-2xl lg:text-3xl font-bold text-[#6558D3] mt-2">{savingsRate}%</p>
+        <div className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 flex flex-col justify-between min-w-0 overflow-hidden">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 truncate">Savings Rate</p>
+            <p className="text-lg sm:text-xl xl:text-[21px] 2xl:text-2xl font-bold text-[#6558D3] mt-2 whitespace-nowrap tabular-nums tracking-tight">
+              {savingsRate}%
+            </p>
           </div>
-          <p className="text-xs text-emerald-600 font-medium mt-3">
+          <p className="text-xs text-emerald-600 font-medium mt-3 truncate">
             {timeframeIncome > timeframeSpending
               ? `+${formatCurrency(timeframeIncome - timeframeSpending)} retained`
               : `${formatCurrency(timeframeIncome - timeframeSpending)} net`}
@@ -535,19 +557,19 @@ export default function DashboardPage() {
       {isMounted && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Cash Flow Area Chart */}
-          <div className="lg:col-span-2 bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
-            <div className="flex justify-between items-center mb-6">
+          <div className="lg:col-span-2 bg-white p-6 rounded-3xl shadow-sm border border-gray-100 min-w-0">
+            <div className="flex flex-wrap justify-between items-center gap-2 mb-6">
               <div>
                 <h3 className="text-base font-bold text-gray-900">Cash Flow Trends</h3>
                 <p className="text-xs text-gray-400 mt-0.5">
                   {chartSubtitle}
                 </p>
               </div>
-              <div className="flex items-center gap-4 text-xs font-medium">
-                <span className="flex items-center gap-1.5 text-emerald-600">
+              <div className="flex items-center gap-4 text-xs font-medium shrink-0">
+                <span className="flex items-center gap-1.5 text-emerald-600 whitespace-nowrap">
                   <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Income
                 </span>
-                <span className="flex items-center gap-1.5 text-[#6558D3]">
+                <span className="flex items-center gap-1.5 text-[#6558D3] whitespace-nowrap">
                   <span className="w-2.5 h-2.5 rounded-full bg-[#6558D3]"></span> Spending
                 </span>
               </div>
@@ -587,7 +609,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Category Donut Chart */}
-          <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 flex flex-col justify-between">
+          <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 flex flex-col justify-between min-w-0">
             <div>
               <h3 className="text-base font-bold text-gray-900">Expenses by Category</h3>
               <p className="text-xs text-gray-400 mt-0.5">For {timeframe.replace("_", " ")}</p>
@@ -628,14 +650,14 @@ export default function DashboardPage() {
       {/* Bottom Row: Recent Transactions, Upcoming Bills, Active Loans & Assets Portfolio */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
         {/* Recent Transactions Table */}
-        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden flex flex-col justify-between">
+        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden flex flex-col justify-between min-w-0">
           <div>
-            <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-              <div>
-                <h3 className="text-base font-bold text-gray-900">Recent Transactions</h3>
-                <p className="text-xs text-gray-400 mt-0.5">Latest account activity</p>
+            <div className="p-5 border-b border-gray-100 flex justify-between items-center gap-2">
+              <div className="min-w-0">
+                <h3 className="text-base font-bold text-gray-900 truncate">Recent Transactions</h3>
+                <p className="text-xs text-gray-400 mt-0.5 truncate">Latest account activity</p>
               </div>
-              <Link href="/transactions" className="text-xs font-semibold text-[#6558D3] hover:underline">
+              <Link href="/transactions" className="text-xs font-semibold text-[#6558D3] hover:underline whitespace-nowrap shrink-0">
                 View all →
               </Link>
             </div>
@@ -647,41 +669,43 @@ export default function DashboardPage() {
             ) : (
               <div className="divide-y divide-gray-50">
                 {transactions.slice(0, 4).map((txn) => (
-                  <div key={txn.id} className="p-4 flex items-center justify-between hover:bg-gray-50/50 transition">
-                    <div>
-                      <p className="text-sm font-semibold text-gray-900">{txn.merchant}</p>
-                      <p className="text-xs text-gray-400 mt-0.5">
+                  <div key={txn.id} className="p-4 flex items-center justify-between gap-3 hover:bg-gray-50/50 transition min-w-0">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-gray-900 truncate" title={txn.merchant}>
+                        {txn.merchant}
+                      </p>
+                      <p className="text-xs text-gray-400 mt-0.5 truncate">
                         {new Date(txn.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })} • {txn.category}
                       </p>
                     </div>
                     <span
-                      className={`text-sm font-bold ${
+                      className={`text-sm font-bold whitespace-nowrap shrink-0 tabular-nums ${
                         txn.type === "expense" ? "text-gray-900" : "text-emerald-600"
                       }`}
                     >
-                      {txn.type === "expense" ? "-" : "+"}
-                      {formatCurrency(Number(txn.amount))}
+                      {txn.type === "expense" ? "\u2212" : "+"}
+                      {formatCurrency(Math.abs(Number(txn.amount)))}
                     </span>
                   </div>
                 ))}
               </div>
             )}
           </div>
-          <div className="p-4 bg-gray-50/50 border-t border-gray-100 text-xs flex justify-between">
+          <div className="p-4 bg-gray-50/50 border-t border-gray-100 text-xs flex justify-between items-center gap-2">
             <span className="text-gray-500">Total Entries:</span>
-            <span className="font-semibold text-gray-900">{transactions.length}</span>
+            <span className="font-semibold text-gray-900 whitespace-nowrap">{transactions.length}</span>
           </div>
         </div>
 
         {/* Upcoming Bills Box */}
-        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6 flex flex-col justify-between">
+        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-5 flex flex-col justify-between min-w-0 overflow-hidden">
           <div>
-            <div className="flex justify-between items-center mb-4">
-              <div>
-                <h3 className="text-base font-bold text-gray-900">Upcoming Bills</h3>
-                <p className="text-xs text-gray-400 mt-0.5">Recurring commitments</p>
+            <div className="flex justify-between items-center gap-2 mb-4">
+              <div className="min-w-0">
+                <h3 className="text-base font-bold text-gray-900 truncate">Upcoming Bills</h3>
+                <p className="text-xs text-gray-400 mt-0.5 truncate">Recurring commitments</p>
               </div>
-              <Link href="/recurring" className="text-xs font-semibold text-[#6558D3] hover:underline">
+              <Link href="/recurring" className="text-xs font-semibold text-[#6558D3] hover:underline whitespace-nowrap shrink-0">
                 Manage →
               </Link>
             </div>
@@ -698,10 +722,10 @@ export default function DashboardPage() {
                   return (
                     <div
                       key={sub.id}
-                      className="flex items-center justify-between p-3 rounded-2xl bg-gray-50/70 border border-gray-100"
+                      className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-gray-50/70 border border-gray-100 min-w-0"
                     >
-                      <div>
-                        <p className="text-sm font-bold text-gray-900">{sub.name}</p>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-bold text-gray-900 truncate" title={sub.name}>{sub.name}</p>
                         <p className="text-xs text-gray-400 mt-0.5">
                           {new Date(sub.next_billing_date).toLocaleDateString("en-US", {
                             month: "short",
@@ -710,15 +734,15 @@ export default function DashboardPage() {
                         </p>
                       </div>
 
-                      <div className="text-right">
-                        <p className="text-sm font-bold text-gray-900">
+                      <div className="text-right shrink-0">
+                        <p className="text-sm font-bold text-gray-900 whitespace-nowrap tabular-nums">
                           {formatCurrency(Number(sub.amount))}
                           <span className="text-[10px] text-gray-400 font-normal">
                             /{sub.billing_cycle === "yearly" ? "yr" : "mo"}
                           </span>
                         </p>
                         <span
-                          className={`inline-block text-[9px] font-bold px-2 py-0.5 rounded-full mt-1 ${
+                          className={`inline-block text-[9px] font-bold px-2 py-0.5 rounded-full mt-1 whitespace-nowrap ${
                             daysLeft <= 3
                               ? "bg-red-100 text-red-700"
                               : daysLeft <= 7
@@ -740,21 +764,21 @@ export default function DashboardPage() {
             )}
           </div>
 
-          <div className="pt-4 mt-4 border-t border-gray-100 flex justify-between items-center text-xs">
-            <span className="text-gray-400">Total Subscriptions:</span>
-            <span className="font-bold text-gray-900">{formatCurrency(totalMonthlySubscriptions)}/mo</span>
+          <div className="pt-4 mt-4 border-t border-gray-100 flex justify-between items-center gap-2 text-xs">
+            <span className="text-gray-400 truncate">Total Subscriptions:</span>
+            <span className="font-bold text-gray-900 whitespace-nowrap tabular-nums">{formatCurrency(totalMonthlySubscriptions)}/mo</span>
           </div>
         </div>
 
         {/* Active Loans & Debt Summary Box */}
-        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6 flex flex-col justify-between">
+        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-5 flex flex-col justify-between min-w-0 overflow-hidden">
           <div>
-            <div className="flex justify-between items-center mb-4">
-              <div>
-                <h3 className="text-base font-bold text-gray-900">Loans & Debt</h3>
-                <p className="text-xs text-gray-400 mt-0.5">Active debt servicing</p>
+            <div className="flex justify-between items-center gap-2 mb-4">
+              <div className="min-w-0">
+                <h3 className="text-base font-bold text-gray-900 truncate">Loans & Debt</h3>
+                <p className="text-xs text-gray-400 mt-0.5 truncate">Active debt servicing</p>
               </div>
-              <Link href="/loans" className="text-xs font-semibold text-[#6558D3] hover:underline">
+              <Link href="/loans" className="text-xs font-semibold text-[#6558D3] hover:underline whitespace-nowrap shrink-0">
                 View all →
               </Link>
             </div>
@@ -776,18 +800,18 @@ export default function DashboardPage() {
                     return (
                       <div
                         key={loan.id}
-                        className="p-3 rounded-2xl bg-gray-50/70 border border-gray-100 space-y-2"
+                        className="p-3 rounded-2xl bg-gray-50/70 border border-gray-100 space-y-2 min-w-0"
                       >
-                        <div className="flex justify-between items-center">
-                          <div>
-                            <p className="text-sm font-bold text-gray-900">{loan.name}</p>
-                            <p className="text-xs text-gray-400">{loan.lender}</p>
+                        <div className="flex justify-between items-center gap-2 min-w-0">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-bold text-gray-900 truncate" title={loan.name}>{loan.name}</p>
+                            <p className="text-xs text-gray-400 truncate" title={loan.lender}>{loan.lender}</p>
                           </div>
-                          <div className="text-right">
-                            <span className="text-sm font-bold text-rose-600">
+                          <div className="text-right shrink-0">
+                            <span className="text-sm font-bold text-rose-600 whitespace-nowrap tabular-nums">
                               {formatCurrency(remaining)}
                             </span>
-                            <span className="text-[10px] text-gray-400 block">
+                            <span className="text-[10px] text-gray-400 block whitespace-nowrap">
                               {percentPaid}% repaid
                             </span>
                           </div>
@@ -806,21 +830,21 @@ export default function DashboardPage() {
             )}
           </div>
 
-          <div className="pt-4 mt-4 border-t border-gray-100 flex justify-between items-center text-xs">
-            <span className="text-gray-400">Total Outstanding Debt:</span>
-            <span className="font-bold text-rose-600">{formatCurrency(totalBorrowedDebt)}</span>
+          <div className="pt-4 mt-4 border-t border-gray-100 flex justify-between items-center gap-2 text-xs">
+            <span className="text-gray-400 truncate">Total Outstanding Debt:</span>
+            <span className="font-bold text-rose-600 whitespace-nowrap tabular-nums">{formatCurrency(totalBorrowedDebt)}</span>
           </div>
         </div>
 
         {/* Assets & Portfolio Summary Box */}
-        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6 flex flex-col justify-between">
+        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-5 flex flex-col justify-between min-w-0 overflow-hidden">
           <div>
-            <div className="flex justify-between items-center mb-4">
-              <div>
-                <h3 className="text-base font-bold text-gray-900">Assets & SIPs</h3>
-                <p className="text-xs text-gray-400 mt-0.5">Wealth & investments</p>
+            <div className="flex justify-between items-center gap-2 mb-4">
+              <div className="min-w-0">
+                <h3 className="text-base font-bold text-gray-900 truncate">Assets & SIPs</h3>
+                <p className="text-xs text-gray-400 mt-0.5 truncate">Wealth & investments</p>
               </div>
-              <Link href="/assets" className="text-xs font-semibold text-[#6558D3] hover:underline">
+              <Link href="/assets" className="text-xs font-semibold text-[#6558D3] hover:underline whitespace-nowrap shrink-0">
                 View all →
               </Link>
             </div>
@@ -840,18 +864,18 @@ export default function DashboardPage() {
                   return (
                     <div
                       key={a.id}
-                      className="p-3 rounded-2xl bg-gray-50/70 border border-gray-100 space-y-1"
+                      className="p-3 rounded-2xl bg-gray-50/70 border border-gray-100 space-y-1 min-w-0"
                     >
-                      <div className="flex justify-between items-center">
-                        <p className="text-sm font-bold text-gray-900 truncate max-w-[130px]">{a.name}</p>
-                        <span className="text-sm font-bold text-gray-900">{formatCurrency(current)}</span>
+                      <div className="flex justify-between items-center gap-2 min-w-0">
+                        <p className="text-sm font-bold text-gray-900 truncate flex-1" title={a.name}>{a.name}</p>
+                        <span className="text-sm font-bold text-gray-900 whitespace-nowrap shrink-0 tabular-nums">{formatCurrency(current)}</span>
                       </div>
-                      <div className="flex justify-between items-center text-[10px]">
-                        <span className="text-gray-400">{a.institution || "Holding"}</span>
+                      <div className="flex justify-between items-center gap-2 text-[10px] min-w-0">
+                        <span className="text-gray-400 truncate">{a.institution || "Holding"}</span>
                         {monthlySip > 0 ? (
-                          <span className="text-emerald-600 font-semibold">+{formatCurrency(monthlySip)}/mo SIP</span>
+                          <span className="text-emerald-600 font-semibold whitespace-nowrap shrink-0 tabular-nums">+{formatCurrency(monthlySip)}/mo SIP</span>
                         ) : (
-                          <span className={gain >= 0 ? "text-emerald-600 font-semibold" : "text-rose-600 font-semibold"}>
+                          <span className={`whitespace-nowrap shrink-0 tabular-nums font-semibold ${gain >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
                             {gain >= 0 ? "+" : ""}{formatCurrency(gain)}
                           </span>
                         )}
@@ -863,9 +887,9 @@ export default function DashboardPage() {
             )}
           </div>
 
-          <div className="pt-4 mt-4 border-t border-gray-100 flex justify-between items-center text-xs">
-            <span className="text-gray-400">Total Portfolio Value:</span>
-            <span className="font-bold text-[#6558D3]">{formatCurrency(totalAssetsValue)}</span>
+          <div className="pt-4 mt-4 border-t border-gray-100 flex justify-between items-center gap-2 text-xs">
+            <span className="text-gray-400 truncate">Total Portfolio Value:</span>
+            <span className="font-bold text-[#6558D3] whitespace-nowrap tabular-nums">{formatCurrency(totalAssetsValue)}</span>
           </div>
         </div>
       </div>

@@ -32,10 +32,13 @@ export function formatCurrencyAmount(
   const numericAmount = typeof amount === 'string' ? parseFloat(amount) || 0 : amount;
   const curr = getCurrencyInfo(currencyCode);
 
-  return new Intl.NumberFormat(curr.locale, {
+  const formatted = new Intl.NumberFormat(curr.locale, {
     style: 'currency',
     currency: curr.code,
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(numericAmount);
+
+  // Replace ASCII hyphen-minus with non-breaking Unicode minus sign (−) so browsers never line-break after the minus sign
+  return formatted.replace(/-/g, '\u2212');
 }
