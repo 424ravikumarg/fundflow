@@ -82,52 +82,87 @@ jobs:
             exit 1
           fi
 
-          mkdir -p ~/.ssh
-          if [ -n "$SSH_KEY" ]; then
-            printf "%s\n" "$SSH_KEY" > ~/.ssh/deploy_key
-            chmod 600 ~/.ssh/deploy_key
-            SSH_CMD="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=20 -i ~/.ssh/deploy_key"
-          elif [ -n "$SSH_PASSWORD" ]; then
-            sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
-            SSH_CMD="sshpass -p $SSH_PASSWORD ssh -o StrictHostKeyChecking=no -o ConnectTimeout=20"
-          else
-            echo "::error::Provide either EC2_SSH_KEY or EC2_SSH_PASSWORD in GitHub Secrets!"
-            exit 1
+          # Prepare remote deployment script
+          cat << 'DEPLOY_SCRIPT' > /tmp/remote_deploy.sh
+          set -e
+          # Ensure root has ec2-user's authorized_keys for future direct root SSH key logins
+          if [ -f /home/ec2-user/.ssh/authorized_keys ]; then
+            mkdir -p /root/.ssh
+            cat /home/ec2-user/.ssh/authorized_keys >> /root/.ssh/authorized_keys
+            sort -u /root/.ssh/authorized_keys -o /root/.ssh/authorized_keys
+            chmod 700 /root/.ssh
+            chmod 600 /root/.ssh/authorized_keys
           fi
 
-          echo ">>> Connecting to $USERNAME@$HOST..."
-          $SSH_CMD "$USERNAME@$HOST" << EOF
-            set -e
-            cd /opt/fundflow
+          cd /opt/fundflow
+          git config --global --add safe.directory /opt/fundflow 2>/dev/null || true
 
-            git config --global --add safe.directory /opt/fundflow 2>/dev/null || true
+          # Authenticate private repository fetch using temporary GitHub token
+          git remote set-url origin "https://x-access-token:__GH_TOKEN__@github.com/__REPO__.git"
+          git fetch origin main
+          git reset --hard origin/main
+          git remote set-url origin "https://github.com/__REPO__.git"
 
-            # Authenticate private repository fetch using temporary GitHub token
-            git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
-            git fetch origin main
-            git reset --hard origin/main
-            git remote set-url origin "https://github.com/${REPO}.git"
+          docker build -t fundflow .
+          docker stop fundflow || true
+          docker rm fundflow || true
+          docker run -d \
+            --name fundflow \
+            --restart always \
+            -p 127.0.0.1:3000:3000 \
+            -v /opt/fundflow/storage:/app/storage \
+            --env-file /opt/fundflow/.env.local \
+            fundflow
 
-            if command -v sudo &>/dev/null && [ "\$EUID" -ne 0 ]; then
-              DOCKER_BIN="sudo docker"
-            else
-              DOCKER_BIN="docker"
+          sleep 3
+          docker ps --filter "name=fundflow"
+          echo ">>> Deployment completed successfully on server!"
+          DEPLOY_SCRIPT
+
+          sed -i "s|__GH_TOKEN__|${GH_TOKEN}|g" /tmp/remote_deploy.sh
+          sed -i "s|__REPO__|${REPO}|g" /tmp/remote_deploy.sh
+
+          mkdir -p ~/.ssh
+          SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=20 -o PubkeyAcceptedKeyTypes=+ssh-rsa -o HostKeyAlgorithms=+ssh-rsa"
+          DEPLOYED=0
+
+          # 1. Try SSH Password first if EC2_SSH_PASSWORD is provided
+          if [ -n "$SSH_PASSWORD" ]; then
+            echo ">>> Attempting password authentication as $USERNAME@$HOST..."
+            sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+            export SSHPASS="$SSH_PASSWORD"
+            if sshpass -e ssh $SSH_OPTS -o PreferredAuthentications=password -o PubkeyAuthentication=no "$USERNAME@$HOST" "echo 'Password auth succeeded'" 2>/dev/null; then
+              echo ">>> Connected via password as $USERNAME. Running deployment..."
+              sshpass -e ssh $SSH_OPTS -o PreferredAuthentications=password -o PubkeyAuthentication=no "$USERNAME@$HOST" "sudo bash -s" < /tmp/remote_deploy.sh
+              DEPLOYED=1
             fi
+          fi
 
-            \$DOCKER_BIN build -t fundflow .
-            \$DOCKER_BIN stop fundflow || true
-            \$DOCKER_BIN rm fundflow || true
-            \$DOCKER_BIN run -d \
-              --name fundflow \
-              --restart always \
-              -p 127.0.0.1:3000:3000 \
-              -v /opt/fundflow/storage:/app/storage \
-              --env-file /opt/fundflow/.env.local \
-              fundflow
+          # 2. Try SSH Key as $USERNAME, then fallback to ec2-user + sudo
+          if [ "$DEPLOYED" -eq 0 ] && [ -n "$SSH_KEY" ]; then
+            printf "%s\n" "$SSH_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+            chmod 600 ~/.ssh/deploy_key
 
-            sleep 3
-            \$DOCKER_BIN ps --filter "name=fundflow"
-          EOF
+            echo ">>> Attempting SSH key authentication as $USERNAME@$HOST..."
+            if ssh $SSH_OPTS -o BatchMode=yes -i ~/.ssh/deploy_key "$USERNAME@$HOST" "echo 'Key auth succeeded'" 2>/dev/null; then
+              echo ">>> Connected via SSH key as $USERNAME. Running deployment..."
+              ssh $SSH_OPTS -o BatchMode=yes -i ~/.ssh/deploy_key "$USERNAME@$HOST" "sudo bash -s" < /tmp/remote_deploy.sh
+              DEPLOYED=1
+            elif [ "$USERNAME" != "ec2-user" ]; then
+              echo ">>> Key rejected for $USERNAME; trying default AWS user ec2-user@$HOST with sudo..."
+              if ssh $SSH_OPTS -o BatchMode=yes -i ~/.ssh/deploy_key "ec2-user@$HOST" "echo 'Key auth succeeded as ec2-user'" 2>/dev/null; then
+                echo ">>> Connected via SSH key as ec2-user! Elevating to root via sudo and deploying..."
+                ssh $SSH_OPTS -o BatchMode=yes -i ~/.ssh/deploy_key "ec2-user@$HOST" "sudo bash -s" < /tmp/remote_deploy.sh
+                DEPLOYED=1
+              fi
+            fi
+          fi
+
+          if [ "$DEPLOYED" -eq 0 ]; then
+            echo "::error::SSH authentication failed for both $USERNAME and ec2-user on $HOST."
+            echo "Please check that either EC2_SSH_PASSWORD (your root password) or EC2_SSH_KEY (full PEM file) is valid in GitHub Secrets."
+            exit 1
+          fi
 
       - name: Output Production Link
         run: |
