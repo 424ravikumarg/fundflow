@@ -1,0 +1,135 @@
+name: Fundflow CI/CD
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Select Environment (dev or prod)'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
+
+jobs:
+  build-and-verify:
+    name: Build & Verify Application
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Run TypeScript Check
+        run: npx tsc --noEmit
+
+      - name: Build Production Bundle
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: 1
+
+  dev-preview:
+    name: Dev — Localhost Preview
+    needs: build-and-verify
+    if: ${{ github.event.inputs.environment == 'dev' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Output Localhost Link & Instructions
+        run: |
+          echo "## 🛠️ Dev Build Verified" >> $GITHUB_STEP_SUMMARY
+          echo "All TypeScript and Next.js build checks passed." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 💻 View on Your Laptop:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Pull the latest changes in your Mac terminal:" >> $GITHUB_STEP_SUMMARY
+          echo "   \`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "   cd /Users/ravimouni/fundflow && git pull origin main" >> $GITHUB_STEP_SUMMARY
+          echo "   \`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "2. Start your local server:" >> $GITHUB_STEP_SUMMARY
+          echo "   \`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "   npm run dev" >> $GITHUB_STEP_SUMMARY
+          echo "   \`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "3. Open **[http://localhost:3000](http://localhost:3000)** in your browser." >> $GITHUB_STEP_SUMMARY
+
+  prod-deploy:
+    name: Prod — Deploy to AWS EC2
+    needs: build-and-verify
+    if: ${{ github.event.inputs.environment == 'prod' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to AWS Server via SSH
+        env:
+          HOST: ${{ secrets.EC2_HOST }}
+          USERNAME: ${{ secrets.EC2_USER }}
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          SSH_PASSWORD: ${{ secrets.EC2_SSH_PASSWORD }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ -z "$HOST" ] || [ -z "$USERNAME" ]; then
+            echo "::error::Missing EC2_HOST or EC2_USER in GitHub Secrets!"
+            exit 1
+          fi
+
+          mkdir -p ~/.ssh
+          if [ -n "$SSH_KEY" ]; then
+            printf "%s\n" "$SSH_KEY" > ~/.ssh/deploy_key
+            chmod 600 ~/.ssh/deploy_key
+            SSH_CMD="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=20 -i ~/.ssh/deploy_key"
+          elif [ -n "$SSH_PASSWORD" ]; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+            SSH_CMD="sshpass -p $SSH_PASSWORD ssh -o StrictHostKeyChecking=no -o ConnectTimeout=20"
+          else
+            echo "::error::Provide either EC2_SSH_KEY or EC2_SSH_PASSWORD in GitHub Secrets!"
+            exit 1
+          fi
+
+          echo ">>> Connecting to $USERNAME@$HOST..."
+          $SSH_CMD "$USERNAME@$HOST" << EOF
+            set -e
+            cd /opt/fundflow
+
+            git config --global --add safe.directory /opt/fundflow 2>/dev/null || true
+
+            # Authenticate private repository fetch using temporary GitHub token
+            git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+            git fetch origin main
+            git reset --hard origin/main
+            git remote set-url origin "https://github.com/${REPO}.git"
+
+            if command -v sudo &>/dev/null && [ "\$EUID" -ne 0 ]; then
+              DOCKER_BIN="sudo docker"
+            else
+              DOCKER_BIN="docker"
+            fi
+
+            \$DOCKER_BIN build -t fundflow .
+            \$DOCKER_BIN stop fundflow || true
+            \$DOCKER_BIN rm fundflow || true
+            \$DOCKER_BIN run -d \
+              --name fundflow \
+              --restart always \
+              -p 127.0.0.1:3000:3000 \
+              -v /opt/fundflow/storage:/app/storage \
+              --env-file /opt/fundflow/.env.local \
+              fundflow
+
+            sleep 3
+            \$DOCKER_BIN ps --filter "name=fundflow"
+          EOF
+
+      - name: Output Production Link
+        run: |
+          echo "## 🚀 Production Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "Live Application: **[http://${{ secrets.EC2_HOST }}](http://${{ secrets.EC2_HOST }})**" >> $GITHUB_STEP_SUMMARY
