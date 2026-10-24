@@ -214,7 +214,7 @@ export default function DashboardPage() {
   // Timeframe Outflows (one-time expenses + recurring obligations)
   const timeframeMonthsMultiplier = useMemo(() => {
     if (timeframe === "all_time") return 1;
-    if (timeframe === "last_quarter") return 3;
+    if (timeframe === "this_quarter" || timeframe === "last_quarter") return 3;
     if (timeframe === "half_year") return 6;
     if (timeframe === "this_year") return currentMonth + 1;
     if (timeframe === "last_year") return 12;
@@ -353,12 +353,19 @@ export default function DashboardPage() {
       };
     }
 
-    // C. Custom Ranges (Last Quarter, Half Year, This Financial Year)
-    if (timeframe === "last_quarter" || timeframe === "half_year" || timeframe === "this_fy") {
+    // C. Custom Ranges (This Quarter, Last Quarter, Half Year, This Financial Year)
+    if (timeframe === "this_quarter" || timeframe === "last_quarter" || timeframe === "half_year" || timeframe === "this_fy") {
       const monthKeys: string[] = [];
       let subtitle = "";
 
-      if (timeframe === "last_quarter") {
+      if (timeframe === "this_quarter") {
+        const currentQuarter = Math.floor(currentMonth / 3);
+        const startMonth = currentQuarter * 3;
+        for (let m = startMonth; m <= startMonth + 2; m++) {
+          monthKeys.push(`${currentYear}-${String(m + 1).padStart(2, "0")}`);
+        }
+        subtitle = `Monthly Cash Flow for This Quarter (Q${currentQuarter + 1} ${currentYear})`;
+      } else if (timeframe === "last_quarter") {
         const currentQuarter = Math.floor(currentMonth / 3);
         const lastQuarter = currentQuarter === 0 ? 3 : currentQuarter - 1;
         const targetYear = currentQuarter === 0 ? currentYear - 1 : currentYear;

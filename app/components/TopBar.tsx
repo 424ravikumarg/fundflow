@@ -9,6 +9,7 @@ export default function TopBar() {
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth();
+  const currentQuarter = Math.floor(currentMonth / 3);
   const fyStartYear = currentMonth >= 3 ? currentYear : currentYear - 1;
   const fyLabel = `FY ${fyStartYear}-${String(fyStartYear + 1).slice(2)}`;
 
@@ -38,6 +39,7 @@ export default function TopBar() {
               <option value="all_time">All Time</option>
               <option value="this_month">This Month</option>
               <option value="last_month">Last Month</option>
+              <option value="this_quarter">This Quarter (Q{currentQuarter + 1} {currentYear})</option>
               <option value="last_quarter">Last Quarter</option>
               <option value="half_year">Half Year (Last 6 Months)</option>
               <option value="this_year">This Year ({currentYear})</option>

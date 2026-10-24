@@ -50,7 +50,15 @@ export function isDateInTimeframe(
     return parsed.year === lastMonthYear && parsed.month === lastMonth;
   }
 
-  // 3. Last Quarter (previous calendar quarter, e.g. Q3 if currently Q4)
+  // 3. This Quarter (current calendar quarter, e.g. Q4: Oct - Dec)
+  if (timeframe === "this_quarter") {
+    const currentQuarter = Math.floor(nowMonth / 3);
+    const startMonth = currentQuarter * 3;
+    const endMonth = startMonth + 2;
+    return parsed.year === nowYear && parsed.month >= startMonth && parsed.month <= endMonth;
+  }
+
+  // 4. Last Quarter (previous calendar quarter, e.g. Q3 if currently Q4)
   if (timeframe === "last_quarter") {
     const currentQuarter = Math.floor(nowMonth / 3);
     const lastQuarter = currentQuarter === 0 ? 3 : currentQuarter - 1;
@@ -119,6 +127,10 @@ export function getTimeframeLabel(timeframe: string, now: Date = new Date()): st
     const lastMonth = nowMonth === 0 ? 11 : nowMonth - 1;
     const lastYear = nowMonth === 0 ? nowYear - 1 : nowYear;
     return `Last Month (${monthNames[lastMonth]} ${lastYear})`;
+  }
+  if (timeframe === "this_quarter") {
+    const currentQuarter = Math.floor(nowMonth / 3);
+    return `This Quarter (Q${currentQuarter + 1} ${nowYear})`;
   }
   if (timeframe === "last_quarter") {
     const currentQuarter = Math.floor(nowMonth / 3);
