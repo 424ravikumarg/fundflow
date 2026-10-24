@@ -18,6 +18,7 @@ import {
 import AddEntryModal from "./components/AddEntryModal";
 import { useCurrency } from "./context/CurrencyContext";
 import { useTimeframe } from "./context/TimeframeContext";
+import { isDateInTimeframe, getTimeframeLabel } from "@/lib/timeframe";
 
 interface Transaction {
   id: string;
@@ -93,7 +94,7 @@ export default function DashboardPage() {
   const [loans, setLoans] = useState<Loan[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [baselineNetWorth, setBaselineNetWorth] = useState(0);
-  const { timeframe, setTimeframe } = useTimeframe();
+  const { timeframe, setTimeframe, refreshPeriods } = useTimeframe();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
 
@@ -104,6 +105,8 @@ export default function DashboardPage() {
         if (Array.isArray(data)) setTransactions(data);
       })
       .catch((err) => console.error("Failed to load transactions", err));
+
+    refreshPeriods();
 
     fetch("/api/subscriptions")
       .then((res) => res.json())
@@ -191,30 +194,13 @@ export default function DashboardPage() {
   const currentMonth = now.getMonth();
 
   const filteredTransactions = useMemo(() => {
-    const list = transactions.filter((t) => {
-      const parsed = parseLocalDate(t.date);
-      if (!parsed) return false;
-
-      if (timeframe === "this_month") {
-        return parsed.year === currentYear && parsed.month === currentMonth;
-      }
-      if (timeframe === "last_month") {
-        const lastMonth = currentMonth === 0 ? 11 : currentMonth - 1;
-        const lastYear = currentMonth === 0 ? currentYear - 1 : currentYear;
-        return parsed.year === lastYear && parsed.month === lastMonth;
-      }
-      if (timeframe === "this_year") {
-        return parsed.year === currentYear;
-      }
-      return true; // "all_time"
-    });
-
+    const list = transactions.filter((t) => isDateInTimeframe(t.date, timeframe, now));
     return list.sort((a, b) => {
       const da = (a.date || "").split("T")[0];
       const db = (b.date || "").split("T")[0];
       return db.localeCompare(da);
     });
-  }, [transactions, timeframe, currentYear, currentMonth]);
+  }, [transactions, timeframe, now]);
 
   // 5. Timeframe Spending & Income Calculations
   const timeframeOneTimeExpenses = filteredTransactions
@@ -226,7 +212,17 @@ export default function DashboardPage() {
     .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
 
   // Timeframe Outflows (one-time expenses + recurring obligations)
-  const timeframeMonthsMultiplier = timeframe === "this_year" ? (currentMonth + 1) : 1;
+  const timeframeMonthsMultiplier = useMemo(() => {
+    if (timeframe === "all_time") return 1;
+    if (timeframe === "last_quarter") return 3;
+    if (timeframe === "half_year") return 6;
+    if (timeframe === "this_year") return currentMonth + 1;
+    if (timeframe === "last_year") return 12;
+    if (timeframe === "this_fy") return currentMonth >= 3 ? currentMonth - 2 : currentMonth + 10;
+    if (timeframe.startsWith("year:")) return 12;
+    return 1; // single month (this_month, last_month, month:YYYY-MM)
+  }, [timeframe, currentMonth]);
+
   const timeframeSpending = timeframeOneTimeExpenses + (totalMonthlyFixedObligations * timeframeMonthsMultiplier);
 
   // Savings rate for selected timeframe
@@ -261,10 +257,18 @@ export default function DashboardPage() {
     chartData: { month: string; income: number; spending: number }[];
     chartSubtitle: string;
   }>(() => {
-    if (timeframe === "this_month" || timeframe === "last_month") {
-      const isThisMonth = timeframe === "this_month";
-      const targetYear = isThisMonth ? currentYear : (currentMonth === 0 ? currentYear - 1 : currentYear);
-      const targetMonth = isThisMonth ? currentMonth : (currentMonth === 0 ? 11 : currentMonth - 1);
+    // A. Single Month (Daily breakdown)
+    if (timeframe === "this_month" || timeframe === "last_month" || timeframe.startsWith("month:")) {
+      let targetYear = currentYear;
+      let targetMonth = currentMonth;
+      if (timeframe === "last_month") {
+        targetYear = currentMonth === 0 ? currentYear - 1 : currentYear;
+        targetMonth = currentMonth === 0 ? 11 : currentMonth - 1;
+      } else if (timeframe.startsWith("month:")) {
+        const [y, m] = timeframe.slice(6).split("-").map(Number);
+        targetYear = y;
+        targetMonth = m - 1;
+      }
 
       const daysInMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
       const monthShort = new Date(targetYear, targetMonth, 1).toLocaleDateString("en-US", { month: "short" });
@@ -302,24 +306,29 @@ export default function DashboardPage() {
       };
     }
 
-    if (timeframe === "this_year") {
+    // B. Single Calendar Year (12-month trend)
+    if (timeframe === "this_year" || timeframe === "last_year" || timeframe.startsWith("year:")) {
+      let targetYear = currentYear;
+      if (timeframe === "last_year") targetYear = currentYear - 1;
+      else if (timeframe.startsWith("year:")) targetYear = parseInt(timeframe.slice(5), 10);
+
       const yearMap: { [key: string]: { label: string; income: number; spending: number } } = {};
 
       for (let m = 0; m < 12; m++) {
-        const d = new Date(currentYear, m, 1);
+        const d = new Date(targetYear, m, 1);
         const label = d.toLocaleDateString("en-US", { month: "short" });
-        const monthKey = `${currentYear}-${String(m + 1).padStart(2, "0")}`;
+        const monthKey = `${targetYear}-${String(m + 1).padStart(2, "0")}`;
         yearMap[monthKey] = {
           label,
           income: 0,
-          spending: m <= currentMonth ? totalMonthlyFixedObligations : 0,
+          spending: targetYear < currentYear || m <= currentMonth ? totalMonthlyFixedObligations : 0,
         };
       }
 
       transactions.forEach((t) => {
         const tDate = new Date(t.date);
         if (isNaN(tDate.getTime())) return;
-        if (tDate.getFullYear() !== currentYear) return;
+        if (tDate.getFullYear() !== targetYear) return;
         const monthKey = `${tDate.getFullYear()}-${String(tDate.getMonth() + 1).padStart(2, "0")}`;
 
         if (yearMap[monthKey]) {
@@ -340,7 +349,74 @@ export default function DashboardPage() {
 
       return {
         chartData: yearData,
-        chartSubtitle: `Monthly Income vs. Outflow for ${currentYear}`,
+        chartSubtitle: `Monthly Income vs. Outflow for Year ${targetYear}`,
+      };
+    }
+
+    // C. Custom Ranges (Last Quarter, Half Year, This Financial Year)
+    if (timeframe === "last_quarter" || timeframe === "half_year" || timeframe === "this_fy") {
+      const monthKeys: string[] = [];
+      let subtitle = "";
+
+      if (timeframe === "last_quarter") {
+        const currentQuarter = Math.floor(currentMonth / 3);
+        const lastQuarter = currentQuarter === 0 ? 3 : currentQuarter - 1;
+        const targetYear = currentQuarter === 0 ? currentYear - 1 : currentYear;
+        const startMonth = lastQuarter * 3;
+        for (let m = startMonth; m <= startMonth + 2; m++) {
+          monthKeys.push(`${targetYear}-${String(m + 1).padStart(2, "0")}`);
+        }
+        subtitle = `Monthly Cash Flow for Last Quarter (Q${lastQuarter + 1} ${targetYear})`;
+      } else if (timeframe === "half_year") {
+        for (let i = 5; i >= 0; i--) {
+          const d = new Date(currentYear, currentMonth - i, 1);
+          monthKeys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+        }
+        subtitle = "Monthly Cash Flow for Last 6 Months";
+      } else if (timeframe === "this_fy") {
+        const fyStartYear = currentMonth >= 3 ? currentYear : currentYear - 1;
+        const fyLabel = `FY ${fyStartYear}-${String(fyStartYear + 1).slice(2)}`;
+        const totalMonths = currentMonth >= 3 ? currentMonth - 2 : currentMonth + 10;
+        for (let i = 0; i < totalMonths; i++) {
+          const d = new Date(fyStartYear, 3 + i, 1);
+          monthKeys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+        }
+        subtitle = `Monthly Cash Flow for This Financial Year (${fyLabel})`;
+      }
+
+      const map: { [key: string]: { label: string; income: number; spending: number } } = {};
+      monthKeys.forEach((mk) => {
+        const [y, m] = mk.split("-").map(Number);
+        const d = new Date(y, m - 1, 1);
+        map[mk] = {
+          label: d.toLocaleDateString("en-US", { month: "short" }) + (monthKeys.length > 6 ? ` '${String(y).slice(2)}` : ""),
+          income: 0,
+          spending: totalMonthlyFixedObligations,
+        };
+      });
+
+      transactions.forEach((t) => {
+        const tDate = t.date ? t.date.split("T")[0] : "";
+        const mk = tDate.slice(0, 7);
+        if (map[mk]) {
+          const amt = Number(t.amount) || 0;
+          if (t.type === "income") {
+            map[mk].income += amt;
+          } else {
+            map[mk].spending += amt;
+          }
+        }
+      });
+
+      const rangeData = monthKeys.map((mk) => ({
+        month: map[mk].label,
+        income: Number(map[mk].income.toFixed(2)),
+        spending: Number(map[mk].spending.toFixed(2)),
+      }));
+
+      return {
+        chartData: rangeData,
+        chartSubtitle: subtitle,
       };
     }
 
@@ -441,25 +517,40 @@ export default function DashboardPage() {
 
         <div className="flex flex-wrap items-center gap-3">
           {/* Timeframe Selector Pill */}
-          <div className="flex items-center bg-white p-1 rounded-2xl border border-gray-200 shadow-2xs">
-            {[
-              { id: "this_month", label: "This Month" },
-              { id: "last_month", label: "Last Month" },
-              { id: "this_year", label: "This Year" },
-              { id: "all_time", label: "All Time" },
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setTimeframe(tab.id as any)}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition cursor-pointer whitespace-nowrap ${
-                  timeframe === tab.id
-                    ? "bg-[#6558D3] text-white shadow-2xs"
-                    : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center bg-white p-1 rounded-2xl border border-gray-200 shadow-2xs">
+              {[
+                { id: "this_month", label: "This Month" },
+                { id: "last_month", label: "Last Month" },
+                { id: "this_year", label: "This Year" },
+                { id: "all_time", label: "All Time" },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setTimeframe(tab.id)}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition cursor-pointer whitespace-nowrap ${
+                    timeframe === tab.id
+                      ? "bg-[#6558D3] text-white shadow-2xs"
+                      : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {!["this_month", "last_month", "this_year", "all_time"].includes(timeframe) && (
+              <div className="flex items-center gap-1.5 bg-purple-50 text-[#6558D3] border border-purple-200/80 px-2.5 py-1 rounded-xl text-xs font-semibold animate-in fade-in duration-150">
+                <span>🗓️ {getTimeframeLabel(timeframe, now)}</span>
+                <button
+                  onClick={() => setTimeframe("all_time")}
+                  className="hover:text-purple-900 ml-1 text-sm leading-none cursor-pointer"
+                  title="Reset to All Time"
+                >
+                  ×
+                </button>
+              </div>
+            )}
           </div>
 
           <Link
@@ -629,7 +720,7 @@ export default function DashboardPage() {
           <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 flex flex-col justify-between min-w-0">
             <div>
               <h3 className="text-base font-bold text-gray-900">Expenses by Category</h3>
-              <p className="text-xs text-gray-400 mt-0.5">For {timeframe.replace("_", " ")}</p>
+              <p className="text-xs text-gray-400 mt-0.5">For {getTimeframeLabel(timeframe, now)}</p>
             </div>
 
             <div className="h-64 w-full flex items-center justify-center my-auto">
@@ -673,13 +764,7 @@ export default function DashboardPage() {
               <div className="min-w-0">
                 <h3 className="text-base font-bold text-gray-900 truncate">Recent Transactions</h3>
                 <p className="text-xs text-gray-400 mt-0.5 truncate">
-                  {timeframe === "this_month"
-                    ? "This month's activity"
-                    : timeframe === "last_month"
-                    ? "Last month's activity"
-                    : timeframe === "this_year"
-                    ? `Activity for ${currentYear}`
-                    : "All-time account activity"}
+                  {getTimeframeLabel(timeframe, now)} activity
                 </p>
               </div>
               <Link href="/transactions" className="text-xs font-semibold text-[#6558D3] hover:underline whitespace-nowrap shrink-0">
@@ -689,7 +774,7 @@ export default function DashboardPage() {
 
             {filteredTransactions.length === 0 ? (
               <div className="p-10 text-center text-gray-400 text-xs">
-                No transactions found for {timeframe === "this_month" ? "this month" : timeframe === "last_month" ? "last month" : timeframe === "this_year" ? "this year" : "all time"}. Click &quot;+ Add entry&quot; to log your first transaction!
+                No transactions found for {getTimeframeLabel(timeframe, now)}. Click &quot;+ Add entry&quot; to log your first transaction!
               </div>
             ) : (
               <div className="divide-y divide-gray-50">

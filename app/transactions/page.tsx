@@ -5,6 +5,7 @@ import AddEntryModal, { TransactionFormData } from "../components/AddEntryModal"
 import ImportCsvModal from "../components/ImportCsvModal";
 import { useCurrency } from "../context/CurrencyContext";
 import { useTimeframe } from "../context/TimeframeContext";
+import { isDateInTimeframe, getTimeframeLabel } from "@/lib/timeframe";
 
 interface Transaction {
   id: string;
@@ -61,7 +62,7 @@ export default function TransactionsPage() {
   const [isFilesModalOpen, setIsFilesModalOpen] = useState(false);
   const [filterCategory, setFilterCategory] = useState("all");
   const [search, setSearch] = useState("");
-  const { timeframe, setTimeframe } = useTimeframe();
+  const { timeframe, setTimeframe, refreshPeriods } = useTimeframe();
   const [renamingFile, setRenamingFile] = useState<ImportedFile | null>(null);
   const [newFileName, setNewFileName] = useState("");
   const [isRenamingFile, setIsRenamingFile] = useState(false);
@@ -80,6 +81,7 @@ export default function TransactionsPage() {
       .catch((err) => console.error("Failed to load transactions", err));
 
     fetchImportedFiles();
+    refreshPeriods();
   };
 
   const fetchImportedFiles = () => {
@@ -290,24 +292,7 @@ export default function TransactionsPage() {
 
     if (!matchesCat || !matchesSearch) return false;
 
-    if (timeframe === "all_time") return true;
-
-    const parsed = parseLocalDate(t.date);
-    if (!parsed) return false;
-
-    if (timeframe === "this_month") {
-      return parsed.year === currentYear && parsed.month === currentMonth;
-    }
-    if (timeframe === "last_month") {
-      const lastMonth = currentMonth === 0 ? 11 : currentMonth - 1;
-      const lastYear = currentMonth === 0 ? currentYear - 1 : currentYear;
-      return parsed.year === lastYear && parsed.month === lastMonth;
-    }
-    if (timeframe === "this_year") {
-      return parsed.year === currentYear;
-    }
-
-    return true;
+    return isDateInTimeframe(t.date, timeframe, now);
   });
 
   const categories = Array.from(new Set(transactions.map((t) => t.category).filter(Boolean)));
@@ -369,25 +354,40 @@ export default function TransactionsPage() {
 
         <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto justify-between lg:justify-end">
           {/* Timeframe Selector Pill */}
-          <div className="flex items-center bg-gray-50 p-1 rounded-xl border border-gray-200 shadow-2xs">
-            {[
-              { id: "all_time", label: "All Time" },
-              { id: "this_month", label: "This Month" },
-              { id: "last_month", label: "Last Month" },
-              { id: "this_year", label: "This Year" },
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setTimeframe(tab.id as any)}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition cursor-pointer whitespace-nowrap ${
-                  timeframe === tab.id
-                    ? "bg-[#6558D3] text-white shadow-2xs"
-                    : "text-gray-600 hover:text-gray-900 hover:bg-white"
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center bg-gray-50 p-1 rounded-xl border border-gray-200 shadow-2xs">
+              {[
+                { id: "all_time", label: "All Time" },
+                { id: "this_month", label: "This Month" },
+                { id: "last_month", label: "Last Month" },
+                { id: "this_year", label: "This Year" },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setTimeframe(tab.id)}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition cursor-pointer whitespace-nowrap ${
+                    timeframe === tab.id
+                      ? "bg-[#6558D3] text-white shadow-2xs"
+                      : "text-gray-600 hover:text-gray-900 hover:bg-white"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {!["all_time", "this_month", "last_month", "this_year"].includes(timeframe) && (
+              <div className="flex items-center gap-1.5 bg-purple-50 text-[#6558D3] border border-purple-200/80 px-2.5 py-1 rounded-xl text-xs font-semibold animate-in fade-in duration-150">
+                <span>🗓️ {getTimeframeLabel(timeframe, now)}</span>
+                <button
+                  onClick={() => setTimeframe("all_time")}
+                  className="hover:text-purple-900 ml-1 text-sm leading-none cursor-pointer"
+                  title="Reset to All Time"
+                >
+                  ×
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-2">

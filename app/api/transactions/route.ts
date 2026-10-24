@@ -78,9 +78,40 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const getFiles = searchParams.get('files');
+    const getPeriods = searchParams.get('periods');
 
     client = await pool.connect();
     await ensureTransactionsTable(client);
+
+    if (getPeriods === 'true') {
+      const periodsRes = await client.query(`
+        SELECT 
+          to_char(date, 'YYYY-MM') as month_key,
+          EXTRACT(YEAR FROM date)::int as year,
+          EXTRACT(MONTH FROM date)::int as month,
+          COUNT(*)::int as count
+        FROM transactions
+        WHERE date IS NOT NULL
+        GROUP BY to_char(date, 'YYYY-MM'), EXTRACT(YEAR FROM date), EXTRACT(MONTH FROM date)
+        ORDER BY month_key DESC
+      `);
+
+      const MONTH_NAMES = [
+        'January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December'
+      ];
+
+      const months = (periodsRes.rows || []).map((r: any) => ({
+        key: r.month_key,
+        label: `${MONTH_NAMES[r.month - 1] || 'Month ' + r.month} ${r.year}`,
+        year: r.year,
+        count: r.count,
+      }));
+
+      const years = Array.from(new Set((periodsRes.rows || []).map((r: any) => r.year))) as number[];
+
+      return NextResponse.json({ years, months });
+    }
 
     if (getFiles === 'true') {
       const filesRes = await client.query(`
