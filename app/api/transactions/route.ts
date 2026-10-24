@@ -160,31 +160,44 @@ export async function PATCH(request: Request) {
       const cleanOld = String(oldFilename || '').trim();
       const cleanNew = String(newFilename).trim();
 
+      const oldColon = `Import: ${cleanOld}`;
+      const newColon = `Import: ${cleanNew}`;
+      const oldParen = `Import (${cleanOld})`;
+      const newParen = `Import (${cleanNew})`;
+
       const txRes = await client.query(
         `UPDATE transactions 
-         SET filename = $1, 
+         SET filename = $1::text, 
              source = CASE 
-               WHEN source = $2 THEN $1 
-               WHEN source = 'Import: ' || $2 THEN 'Import: ' || $1 
-               WHEN source = 'Import (' || $2 || ')' THEN 'Import (' || $1 || ')' 
+               WHEN source = $2::text THEN $1::text 
+               WHEN source = $3::text THEN $4::text 
+               WHEN source = $5::text THEN $6::text 
                ELSE source 
              END 
-         WHERE filename = $2 
-            OR source = $2 
-            OR source = 'Import: ' || $2 
-            OR source = 'Import (' || $2 || ')'`,
-        [cleanNew, cleanOld]
+         WHERE filename = $2::text 
+            OR source = $2::text 
+            OR source = $3::text 
+            OR source = $5::text`,
+        [cleanNew, cleanOld, oldColon, newColon, oldParen, newParen]
       );
 
-      await client.query(
-        'UPDATE uploaded_files SET filename = $1 WHERE filename = $2',
-        [cleanNew, cleanOld]
-      );
+      try {
+        await client.query(
+          'UPDATE uploaded_files SET filename = $1::text WHERE filename = $2::text',
+          [cleanNew, cleanOld]
+        );
+      } catch (e) {
+        console.warn('uploaded_files update warning:', e);
+      }
 
-      await client.query(
-        'UPDATE documents SET filename = $1 WHERE filename = $2',
-        [cleanNew, cleanOld]
-      );
+      try {
+        await client.query(
+          'UPDATE documents SET filename = $1::text WHERE filename = $2::text',
+          [cleanNew, cleanOld]
+        );
+      } catch (e) {
+        console.warn('documents update warning:', e);
+      }
 
       return NextResponse.json({
         success: true,

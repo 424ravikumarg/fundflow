@@ -285,20 +285,25 @@ export async function PATCH(request: Request) {
 
     // Synchronously update any matching transactions imported from this filename
     try {
+      const oldColon = `Import: ${oldFilename}`;
+      const newColon = `Import: ${cleanFilename}`;
+      const oldParen = `Import (${oldFilename})`;
+      const newParen = `Import (${cleanFilename})`;
+
       await client.query(
         `UPDATE transactions 
-         SET filename = $1, 
+         SET filename = $1::text, 
              source = CASE 
-               WHEN source = $2 THEN $1 
-               WHEN source = 'Import: ' || $2 THEN 'Import: ' || $1 
-               WHEN source = 'Import (' || $2 || ')' THEN 'Import (' || $1 || ')' 
+               WHEN source = $2::text THEN $1::text 
+               WHEN source = $3::text THEN $4::text 
+               WHEN source = $5::text THEN $6::text 
                ELSE source 
              END 
-         WHERE filename = $2 
-            OR source = $2 
-            OR source = 'Import: ' || $2 
-            OR source = 'Import (' || $2 || ')'`,
-        [cleanFilename, oldFilename]
+         WHERE filename = $2::text 
+            OR source = $2::text 
+            OR source = $3::text 
+            OR source = $5::text`,
+        [cleanFilename, oldFilename, oldColon, newColon, oldParen, newParen]
       );
     } catch (e) {
       console.warn('Sync transactions filename notice:', e);
