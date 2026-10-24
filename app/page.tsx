@@ -73,6 +73,18 @@ const DONUT_COLORS = [
   "#06B6D4",
 ];
 
+function parseLocalDate(dateStr: string): { year: number; month: number; day: number } | null {
+  if (!dateStr) return null;
+  const clean = dateStr.split("T")[0];
+  const parts = clean.split("-").map(Number);
+  if (parts.length === 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) {
+    return { year: parts[0], month: parts[1] - 1, day: parts[2] };
+  }
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return null;
+  return { year: d.getFullYear(), month: d.getMonth(), day: d.getDate() };
+}
+
 export default function DashboardPage() {
   const { formatCurrency } = useCurrency();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -178,24 +190,28 @@ export default function DashboardPage() {
   const currentMonth = now.getMonth();
 
   const filteredTransactions = useMemo(() => {
-    return transactions.filter((t) => {
-      const tDate = new Date(t.date);
-      if (isNaN(tDate.getTime())) return false;
+    const list = transactions.filter((t) => {
+      const parsed = parseLocalDate(t.date);
+      if (!parsed) return false;
 
       if (timeframe === "this_month") {
-        return tDate.getFullYear() === currentYear && tDate.getMonth() === currentMonth;
+        return parsed.year === currentYear && parsed.month === currentMonth;
       }
       if (timeframe === "last_month") {
-        const lastMonthDate = new Date(currentYear, currentMonth - 1, 1);
-        return (
-          tDate.getFullYear() === lastMonthDate.getFullYear() &&
-          tDate.getMonth() === lastMonthDate.getMonth()
-        );
+        const lastMonth = currentMonth === 0 ? 11 : currentMonth - 1;
+        const lastYear = currentMonth === 0 ? currentYear - 1 : currentYear;
+        return parsed.year === lastYear && parsed.month === lastMonth;
       }
       if (timeframe === "this_year") {
-        return tDate.getFullYear() === currentYear;
+        return parsed.year === currentYear;
       }
       return true; // "all_time"
+    });
+
+    return list.sort((a, b) => {
+      const da = (a.date || "").split("T")[0];
+      const db = (b.date || "").split("T")[0];
+      return db.localeCompare(da);
     });
   }, [transactions, timeframe, currentYear, currentMonth]);
 
@@ -655,20 +671,28 @@ export default function DashboardPage() {
             <div className="p-5 border-b border-gray-100 flex justify-between items-center gap-2">
               <div className="min-w-0">
                 <h3 className="text-base font-bold text-gray-900 truncate">Recent Transactions</h3>
-                <p className="text-xs text-gray-400 mt-0.5 truncate">Latest account activity</p>
+                <p className="text-xs text-gray-400 mt-0.5 truncate">
+                  {timeframe === "this_month"
+                    ? "This month's activity"
+                    : timeframe === "last_month"
+                    ? "Last month's activity"
+                    : timeframe === "this_year"
+                    ? `Activity for ${currentYear}`
+                    : "All-time account activity"}
+                </p>
               </div>
               <Link href="/transactions" className="text-xs font-semibold text-[#6558D3] hover:underline whitespace-nowrap shrink-0">
                 View all →
               </Link>
             </div>
 
-            {transactions.length === 0 ? (
+            {filteredTransactions.length === 0 ? (
               <div className="p-10 text-center text-gray-400 text-xs">
-                No transactions found. Click &quot;+ Add entry&quot; to log your first transaction!
+                No transactions found for {timeframe === "this_month" ? "this month" : timeframe === "last_month" ? "last month" : timeframe === "this_year" ? "this year" : "all time"}. Click &quot;+ Add entry&quot; to log your first transaction!
               </div>
             ) : (
               <div className="divide-y divide-gray-50">
-                {transactions.slice(0, 4).map((txn) => (
+                {filteredTransactions.slice(0, 5).map((txn) => (
                   <div key={txn.id} className="p-4 flex items-center justify-between gap-3 hover:bg-gray-50/50 transition min-w-0">
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-semibold text-gray-900 truncate" title={txn.merchant}>
@@ -692,8 +716,8 @@ export default function DashboardPage() {
             )}
           </div>
           <div className="p-4 bg-gray-50/50 border-t border-gray-100 text-xs flex justify-between items-center gap-2">
-            <span className="text-gray-500">Total Entries:</span>
-            <span className="font-semibold text-gray-900 whitespace-nowrap">{transactions.length}</span>
+            <span className="text-gray-500">Matching Entries:</span>
+            <span className="font-semibold text-gray-900 whitespace-nowrap">{filteredTransactions.length}</span>
           </div>
         </div>
 

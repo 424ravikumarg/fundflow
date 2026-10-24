@@ -38,6 +38,18 @@ function formatDisplayDate(dateStr: string): string {
   return dateStr;
 }
 
+function parseLocalDate(dateStr: string): { year: number; month: number; day: number } | null {
+  if (!dateStr) return null;
+  const clean = dateStr.split("T")[0];
+  const parts = clean.split("-").map(Number);
+  if (parts.length === 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) {
+    return { year: parts[0], month: parts[1] - 1, day: parts[2] };
+  }
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return null;
+  return { year: d.getFullYear(), month: d.getMonth(), day: d.getDate() };
+}
+
 export default function TransactionsPage() {
   const { formatCurrency } = useCurrency();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -48,6 +60,10 @@ export default function TransactionsPage() {
   const [isFilesModalOpen, setIsFilesModalOpen] = useState(false);
   const [filterCategory, setFilterCategory] = useState("all");
   const [search, setSearch] = useState("");
+  const [timeframe, setTimeframe] = useState<"all_time" | "this_month" | "last_month" | "this_year">("all_time");
+  const [renamingFile, setRenamingFile] = useState<ImportedFile | null>(null);
+  const [newFileName, setNewFileName] = useState("");
+  const [isRenamingFile, setIsRenamingFile] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isBatchDeleting, setIsBatchDeleting] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
@@ -164,6 +180,41 @@ export default function TransactionsPage() {
     }
   };
 
+  const handleStartRenameFile = (file: ImportedFile) => {
+    setRenamingFile(file);
+    setNewFileName(file.filename);
+  };
+
+  const handleRenameFileSubmit = async () => {
+    if (!renamingFile || !newFileName.trim()) return;
+
+    setIsRenamingFile(true);
+    try {
+      const res = await fetch("/api/transactions", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          renameFile: true,
+          oldFilename: renamingFile.filename,
+          newFilename: newFileName.trim(),
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setRenamingFile(null);
+        fetchTransactions();
+      } else {
+        alert(data.error || "Failed to rename file");
+      }
+    } catch (err) {
+      console.error("Rename file error:", err);
+      alert("Error renaming file");
+    } finally {
+      setIsRenamingFile(false);
+    }
+  };
+
   // Clean a particular file
   const handleCleanSpecificFile = async (filename: string) => {
     if (!confirm(`Are you sure you want to remove all transactions imported from "${filename}"?`)) return;
@@ -224,6 +275,10 @@ export default function TransactionsPage() {
     }
   };
 
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth();
+
   const filtered = transactions.filter((t) => {
     const matchesCat = filterCategory === "all" || t.category === filterCategory;
     const matchesSearch =
@@ -231,7 +286,27 @@ export default function TransactionsPage() {
       (t.category || "").toLowerCase().includes(search.toLowerCase()) ||
       (t.source || "").toLowerCase().includes(search.toLowerCase()) ||
       (t.filename || "").toLowerCase().includes(search.toLowerCase());
-    return matchesCat && matchesSearch;
+
+    if (!matchesCat || !matchesSearch) return false;
+
+    if (timeframe === "all_time") return true;
+
+    const parsed = parseLocalDate(t.date);
+    if (!parsed) return false;
+
+    if (timeframe === "this_month") {
+      return parsed.year === currentYear && parsed.month === currentMonth;
+    }
+    if (timeframe === "last_month") {
+      const lastMonth = currentMonth === 0 ? 11 : currentMonth - 1;
+      const lastYear = currentMonth === 0 ? currentYear - 1 : currentYear;
+      return parsed.year === lastYear && parsed.month === lastMonth;
+    }
+    if (timeframe === "this_year") {
+      return parsed.year === currentYear;
+    }
+
+    return true;
   });
 
   const categories = Array.from(new Set(transactions.map((t) => t.category).filter(Boolean)));
@@ -281,27 +356,52 @@ export default function TransactionsPage() {
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col sm:flex-row gap-3 items-center justify-between">
+      {/* Filters Bar with Timeframe & Search */}
+      <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col lg:flex-row gap-3 items-center justify-between">
         <input
           type="text"
           placeholder="Search merchant, UPI payee, file, or details..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-full sm:w-80 border border-gray-200 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-[#6558D3]/30"
+          className="w-full lg:w-80 border border-gray-200 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-[#6558D3]/30"
         />
-        <div className="flex items-center gap-2 w-full sm:w-auto">
-          <span className="text-xs font-semibold uppercase text-gray-400">Category:</span>
-          <select
-            value={filterCategory}
-            onChange={(e) => setFilterCategory(e.target.value)}
-            className="border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none bg-white focus:ring-2 focus:ring-[#6558D3]/30"
-          >
-            <option value="all">All Categories</option>
-            {categories.map((cat) => (
-              <option key={cat} value={cat}>{cat}</option>
+
+        <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto justify-between lg:justify-end">
+          {/* Timeframe Selector Pill */}
+          <div className="flex items-center bg-gray-50 p-1 rounded-xl border border-gray-200 shadow-2xs">
+            {[
+              { id: "all_time", label: "All Time" },
+              { id: "this_month", label: "This Month" },
+              { id: "last_month", label: "Last Month" },
+              { id: "this_year", label: "This Year" },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setTimeframe(tab.id as any)}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition cursor-pointer whitespace-nowrap ${
+                  timeframe === tab.id
+                    ? "bg-[#6558D3] text-white shadow-2xs"
+                    : "text-gray-600 hover:text-gray-900 hover:bg-white"
+                }`}
+              >
+                {tab.label}
+              </button>
             ))}
-          </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold uppercase text-gray-400">Category:</span>
+            <select
+              value={filterCategory}
+              onChange={(e) => setFilterCategory(e.target.value)}
+              className="border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none bg-white focus:ring-2 focus:ring-[#6558D3]/30"
+            >
+              <option value="all">All Categories</option>
+              {categories.map((cat) => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
@@ -520,13 +620,21 @@ export default function TransactionsPage() {
                       )}
                     </div>
 
-                    <button
-                      onClick={() => handleCleanSpecificFile(file.filename)}
-                      disabled={cleaningFile === file.filename}
-                      className="border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 px-3 py-2 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 shrink-0 disabled:opacity-50"
-                    >
-                      <span>🗑️</span> {cleaningFile === file.filename ? "Cleaning..." : "Clean this file"}
-                    </button>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => handleStartRenameFile(file)}
+                        className="border border-[#6558D3]/30 bg-purple-50 hover:bg-purple-100 text-[#6558D3] px-3 py-2 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-1"
+                      >
+                        <span>✏️</span> Rename
+                      </button>
+                      <button
+                        onClick={() => handleCleanSpecificFile(file.filename)}
+                        disabled={cleaningFile === file.filename}
+                        className="border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 px-3 py-2 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 shrink-0 disabled:opacity-50"
+                      >
+                        <span>🗑️</span> {cleaningFile === file.filename ? "Cleaning..." : "Clean this file"}
+                      </button>
+                    </div>
                   </div>
                 ))
               )}
@@ -556,6 +664,41 @@ export default function TransactionsPage() {
                 className="bg-gray-100 hover:bg-gray-200 text-gray-800 px-4 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ml-auto"
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rename File Modal */}
+      {renamingFile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl border border-gray-100 animate-in fade-in zoom-in-95 duration-150">
+            <h3 className="text-lg font-bold text-gray-900 mb-1">Rename Uploaded Statement File</h3>
+            <p className="text-xs text-gray-500 mb-4">
+              Renaming will update the label for all transactions imported from this file.
+            </p>
+            <input
+              type="text"
+              value={newFileName}
+              onChange={(e) => setNewFileName(e.target.value)}
+              className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#6558D3]/30 font-medium mb-4"
+              placeholder="e.g. SBI_Card_Statement_October_2026.pdf"
+              autoFocus
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setRenamingFile(null)}
+                className="px-4 py-2 border border-gray-200 text-gray-600 rounded-xl text-xs font-semibold hover:bg-gray-50 transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRenameFileSubmit}
+                disabled={isRenamingFile || !newFileName.trim()}
+                className="bg-[#6558D3] hover:bg-[#5244bd] text-white px-4 py-2 rounded-xl text-xs font-semibold shadow-xs transition cursor-pointer disabled:opacity-50"
+              >
+                {isRenamingFile ? "Saving..." : "Save Name"}
               </button>
             </div>
           </div>

@@ -19,6 +19,9 @@ export default function DocumentsPage() {
   const [isUploading, setIsUploading] = useState(false);
   const [selectedDoc, setSelectedDoc] = useState<DocumentItem | null>(null);
   const [parsingDoc, setParsingDoc] = useState<DocumentItem | null>(null);
+  const [renamingDoc, setRenamingDoc] = useState<DocumentItem | null>(null);
+  const [newDocName, setNewDocName] = useState("");
+  const [isRenaming, setIsRenaming] = useState(false);
 
   const fetchDocuments = async () => {
     try {
@@ -62,6 +65,39 @@ export default function DocumentsPage() {
     } finally {
       setIsUploading(false);
       e.target.value = "";
+    }
+  };
+
+  const handleStartRename = (doc: DocumentItem) => {
+    setRenamingDoc(doc);
+    setNewDocName(doc.filename);
+  };
+
+  const handleRenameSubmit = async () => {
+    if (!renamingDoc || !newDocName.trim()) return;
+
+    setIsRenaming(true);
+    try {
+      const res = await fetch("/api/documents", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: renamingDoc.id, filename: newDocName.trim() }),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setDocuments((prev) =>
+          prev.map((d) => (d.id === renamingDoc.id ? { ...d, filename: newDocName.trim() } : d))
+        );
+        setRenamingDoc(null);
+      } else {
+        alert(data.error || "Failed to rename document");
+      }
+    } catch (err) {
+      console.error("Rename error:", err);
+      alert("Error renaming document");
+    } finally {
+      setIsRenaming(false);
     }
   };
 
@@ -180,7 +216,13 @@ export default function DocumentsPage() {
                         <span>⚡</span> Parse Transactions
                       </button>
                     </td>
-                    <td className="p-4 text-center">
+                    <td className="p-4 text-center space-x-1.5 whitespace-nowrap">
+                      <button
+                        onClick={() => handleStartRename(doc)}
+                        className="text-xs text-[#6558D3] hover:text-[#5244bd] hover:bg-purple-50 px-2.5 py-1 rounded-md transition cursor-pointer font-semibold"
+                      >
+                        Rename
+                      </button>
                       <button
                         onClick={() => handleDelete(doc.id)}
                         className="text-xs text-red-500 hover:text-red-700 hover:bg-red-50 px-2.5 py-1 rounded-md transition cursor-pointer"
@@ -210,6 +252,41 @@ export default function DocumentsPage() {
           fetchDocuments();
         }}
       />
+
+      {/* Rename Document Modal */}
+      {renamingDoc && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl border border-gray-100 animate-in fade-in zoom-in-95 duration-150">
+            <h3 className="text-lg font-bold text-gray-900 mb-1">Rename Document</h3>
+            <p className="text-xs text-gray-500 mb-4">
+              Enter a new name for this file in your Document Vault.
+            </p>
+            <input
+              type="text"
+              value={newDocName}
+              onChange={(e) => setNewDocName(e.target.value)}
+              className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#6558D3]/30 font-medium mb-4"
+              placeholder="e.g. Axis_Bank_October_2026.pdf"
+              autoFocus
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setRenamingDoc(null)}
+                className="px-4 py-2 border border-gray-200 text-gray-600 rounded-xl text-xs font-semibold hover:bg-gray-50 transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRenameSubmit}
+                disabled={isRenaming || !newDocName.trim()}
+                className="bg-[#6558D3] hover:bg-[#5244bd] text-white px-4 py-2 rounded-xl text-xs font-semibold shadow-xs transition cursor-pointer disabled:opacity-50"
+              >
+                {isRenaming ? "Saving..." : "Save Name"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

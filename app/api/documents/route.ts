@@ -251,3 +251,71 @@ export async function DELETE(request: Request) {
     if (client) client.release();
   }
 }
+
+// 4. PATCH: Rename a document
+export async function PATCH(request: Request) {
+  let client;
+  try {
+    const body = await request.json();
+    const { id, filename } = body;
+
+    if (!id || !filename || !filename.trim()) {
+      return NextResponse.json(
+        { error: 'Document ID and new filename are required' },
+        { status: 400 }
+      );
+    }
+
+    client = await pool.connect();
+    await ensureDocumentsTable(client);
+
+    const oldDocRes = await client.query('SELECT filename FROM documents WHERE id = $1', [id]);
+    if (oldDocRes.rows.length === 0) {
+      return NextResponse.json({ error: 'Document not found' }, { status: 404 });
+    }
+
+    const oldFilename = oldDocRes.rows[0].filename;
+    const cleanFilename = filename.trim();
+
+    // Update the document record
+    const result = await client.query(
+      'UPDATE documents SET filename = $1 WHERE id = $2 RETURNING *',
+      [cleanFilename, id]
+    );
+
+    // Synchronously update any matching transactions imported from this filename
+    try {
+      await client.query(
+        `UPDATE transactions 
+         SET filename = $1, 
+             source = CASE 
+               WHEN source = $2 THEN $1 
+               WHEN source = 'Import: ' || $2 THEN 'Import: ' || $1 
+               WHEN source = 'Import (' || $2 || ')' THEN 'Import (' || $1 || ')' 
+               ELSE source 
+             END 
+         WHERE filename = $2 
+            OR source = $2 
+            OR source = 'Import: ' || $2 
+            OR source = 'Import (' || $2 || ')'`,
+        [cleanFilename, oldFilename]
+      );
+    } catch (e) {
+      console.warn('Sync transactions filename notice:', e);
+    }
+
+    return NextResponse.json({
+      success: true,
+      document: result.rows[0],
+      message: `Document renamed to "${cleanFilename}"`,
+    });
+  } catch (err: any) {
+    console.error('Documents PATCH Error:', err);
+    return NextResponse.json(
+      { error: err.message || 'Failed to rename document' },
+      { status: 500 }
+    );
+  } finally {
+    if (client) client.release();
+  }
+}

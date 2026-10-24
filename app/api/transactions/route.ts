@@ -147,14 +147,55 @@ export async function PATCH(request: Request) {
   let client;
   try {
     const body = await request.json();
-    const { id, amount, merchant, category, date, type } = body;
+    const { id, amount, merchant, category, date, type, oldFilename, newFilename, renameFile } = body;
+
+    client = await pool.connect();
+    await ensureTransactionsTable(client);
+
+    // Support renaming an uploaded file across all imported transactions and records
+    if (renameFile || (oldFilename && newFilename)) {
+      if (!newFilename || !newFilename.trim()) {
+        return NextResponse.json({ error: 'New filename is required' }, { status: 400 });
+      }
+      const cleanOld = String(oldFilename || '').trim();
+      const cleanNew = String(newFilename).trim();
+
+      const txRes = await client.query(
+        `UPDATE transactions 
+         SET filename = $1, 
+             source = CASE 
+               WHEN source = $2 THEN $1 
+               WHEN source = 'Import: ' || $2 THEN 'Import: ' || $1 
+               WHEN source = 'Import (' || $2 || ')' THEN 'Import (' || $1 || ')' 
+               ELSE source 
+             END 
+         WHERE filename = $2 
+            OR source = $2 
+            OR source = 'Import: ' || $2 
+            OR source = 'Import (' || $2 || ')'`,
+        [cleanNew, cleanOld]
+      );
+
+      await client.query(
+        'UPDATE uploaded_files SET filename = $1 WHERE filename = $2',
+        [cleanNew, cleanOld]
+      );
+
+      await client.query(
+        'UPDATE documents SET filename = $1 WHERE filename = $2',
+        [cleanNew, cleanOld]
+      );
+
+      return NextResponse.json({
+        success: true,
+        message: `Successfully renamed "${cleanOld}" to "${cleanNew}" (${txRes.rowCount} transactions updated).`,
+        count: txRes.rowCount,
+      });
+    }
 
     if (!id) {
       return NextResponse.json({ error: 'Missing transaction ID' }, { status: 400 });
     }
-
-    client = await pool.connect();
-    await ensureTransactionsTable(client);
 
     const result = await client.query(
       `UPDATE transactions 
