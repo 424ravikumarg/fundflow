@@ -48,6 +48,8 @@ export default function TransactionsPage() {
   const [isFilesModalOpen, setIsFilesModalOpen] = useState(false);
   const [filterCategory, setFilterCategory] = useState("all");
   const [search, setSearch] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isBatchDeleting, setIsBatchDeleting] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
   const [isDeduping, setIsDeduping] = useState(false);
   const [cleaningFile, setCleaningFile] = useState<string | null>(null);
@@ -99,10 +101,66 @@ export default function TransactionsPage() {
       const res = await fetch(`/api/transactions?id=${id}`, { method: "DELETE" });
       if (res.ok) {
         setTransactions((prev) => prev.filter((t) => t.id !== id));
+        setSelectedIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
         fetchImportedFiles();
       }
     } catch (err) {
       console.error("Delete error:", err);
+    }
+  };
+
+  const handleToggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleToggleSelectAll = () => {
+    if (filtered.length === 0) return;
+    const allFilteredSelected = filtered.every((t) => selectedIds.has(t.id));
+    if (allFilteredSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filtered.map((t) => t.id)));
+    }
+  };
+
+  const handleBatchDelete = async () => {
+    if (selectedIds.size === 0) return;
+    if (
+      !confirm(
+        `Are you sure you want to permanently delete ${selectedIds.size} selected transaction(s)?`
+      )
+    )
+      return;
+
+    setIsBatchDeleting(true);
+    try {
+      const res = await fetch("/api/transactions", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: Array.from(selectedIds) }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setTransactions((prev) => prev.filter((t) => !selectedIds.has(t.id)));
+        setSelectedIds(new Set());
+        fetchImportedFiles();
+      } else {
+        alert(data.error || "Failed to delete selected transactions.");
+      }
+    } catch (err) {
+      console.error("Batch delete error:", err);
+      alert("An error occurred while deleting selected transactions.");
+    } finally {
+      setIsBatchDeleting(false);
     }
   };
 
@@ -178,6 +236,16 @@ export default function TransactionsPage() {
 
   const categories = Array.from(new Set(transactions.map((t) => t.category).filter(Boolean)));
 
+  const selectedTotalExpense = Array.from(selectedIds).reduce((sum, id) => {
+    const t = transactions.find((x) => x.id === id);
+    return t && t.type === "expense" ? sum + Number(t.amount) : sum;
+  }, 0);
+
+  const selectedTotalIncome = Array.from(selectedIds).reduce((sum, id) => {
+    const t = transactions.find((x) => x.id === id);
+    return t && t.type === "income" ? sum + Number(t.amount) : sum;
+  }, 0);
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -237,6 +305,55 @@ export default function TransactionsPage() {
         </div>
       </div>
 
+      {/* Batch Selection Action Bar */}
+      {selectedIds.size > 0 && (
+        <div className="bg-[#6558D3]/10 border border-[#6558D3]/20 p-4 rounded-2xl flex flex-wrap items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2 duration-150">
+          <div className="flex items-center gap-3">
+            <span className="p-2 bg-[#6558D3] text-white rounded-xl text-xs font-bold">
+              ✓ {selectedIds.size}
+            </span>
+            <div>
+              <p className="text-sm font-bold text-gray-900">
+                {selectedIds.size} transaction{selectedIds.size > 1 ? "s" : ""} selected
+              </p>
+              <p className="text-xs text-gray-500">
+                {selectedTotalExpense > 0 && (
+                  <span className="text-rose-600 font-semibold mr-2">
+                    Expenses: {formatCurrency(selectedTotalExpense)}
+                  </span>
+                )}
+                {selectedTotalIncome > 0 && (
+                  <span className="text-emerald-600 font-semibold">
+                    Income: {formatCurrency(selectedTotalIncome)}
+                  </span>
+                )}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setSelectedIds(new Set())}
+              className="px-3.5 py-1.5 border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 rounded-xl text-xs font-semibold transition cursor-pointer"
+            >
+              Clear Selection
+            </button>
+            <button
+              onClick={handleBatchDelete}
+              disabled={isBatchDeleting}
+              className="bg-red-600 hover:bg-red-700 text-white px-4 py-1.5 rounded-xl text-xs font-semibold shadow-xs transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+            >
+              <span>🗑️</span>
+              <span>
+                {isBatchDeleting
+                  ? "Deleting..."
+                  : `Delete Selected (${selectedIds.size})`}
+              </span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Table */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
         {filtered.length === 0 ? (
@@ -248,6 +365,18 @@ export default function TransactionsPage() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-gray-50/60 border-b border-gray-100 text-xs uppercase tracking-wider text-gray-400 font-semibold">
+                  <th className="p-4 w-10 text-center">
+                    <input
+                      type="checkbox"
+                      checked={
+                        filtered.length > 0 &&
+                        filtered.every((t) => selectedIds.has(t.id))
+                      }
+                      onChange={handleToggleSelectAll}
+                      className="rounded text-[#6558D3] focus:ring-[#6558D3] cursor-pointer"
+                      title="Select / deselect all visible transactions"
+                    />
+                  </th>
                   <th className="p-4">Date</th>
                   <th className="p-4">Merchant / Payee Details</th>
                   <th className="p-4">Category</th>
@@ -267,8 +396,25 @@ export default function TransactionsPage() {
                       displayFile.includes(".PDF") ||
                       displayFile.startsWith("Import"));
 
+                  const isSelected = selectedIds.has(t.id);
+
                   return (
-                    <tr key={t.id} className="hover:bg-gray-50/50 transition">
+                    <tr
+                      key={t.id}
+                      className={`transition ${
+                        isSelected
+                          ? "bg-purple-50/70 hover:bg-purple-50/90"
+                          : "hover:bg-gray-50/50"
+                      }`}
+                    >
+                      <td className="p-4 text-center">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => handleToggleSelect(t.id)}
+                          className="rounded text-[#6558D3] focus:ring-[#6558D3] cursor-pointer"
+                        />
+                      </td>
                       <td className="p-4 text-sm text-gray-600 whitespace-nowrap font-medium">
                         {formatDisplayDate(t.date)}
                       </td>

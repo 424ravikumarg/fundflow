@@ -189,7 +189,7 @@ export async function PATCH(request: Request) {
   }
 }
 
-// 4. DELETE: Remove a transaction by ID, clean a specific file, deduplicate, or clear all
+// 4. DELETE: Remove a transaction by ID, batch delete IDs, clean a specific file, deduplicate, or clear all
 export async function DELETE(request: Request) {
   let client;
   try {
@@ -202,6 +202,34 @@ export async function DELETE(request: Request) {
 
     client = await pool.connect();
     await ensureTransactionsTable(client);
+
+    // Support batch deletion via query param ?ids=id1,id2 or JSON body { ids: [...] }
+    let idsToDelete: string[] = [];
+    const queryIds = searchParams.get('ids');
+    if (queryIds) {
+      idsToDelete = queryIds.split(',').map((s) => s.trim()).filter(Boolean);
+    } else {
+      try {
+        const body = await request.json();
+        if (Array.isArray(body?.ids)) {
+          idsToDelete = body.ids.map((s: any) => String(s).trim()).filter(Boolean);
+        }
+      } catch {
+        // Body optional
+      }
+    }
+
+    if (idsToDelete.length > 0) {
+      const res = await client.query(
+        'DELETE FROM transactions WHERE id::text = ANY($1::text[])',
+        [idsToDelete]
+      );
+      return NextResponse.json({
+        success: true,
+        count: res.rowCount || 0,
+        message: `Successfully deleted ${res.rowCount || 0} transaction(s).`,
+      });
+    }
 
     // One-click Deduplicate action
     if (dedupe === 'true') {
