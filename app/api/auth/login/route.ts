@@ -7,16 +7,17 @@ import {
   generate2FAOTP,
   maskContact,
 } from '@/lib/auth';
+import { send2FAEmail } from '@/lib/email';
 
 export async function POST(request: Request) {
   let client;
   try {
     const body = await request.json();
-    const { email, password } = body;
+    const { email, password, directOtp } = body;
 
-    if (!email || !password) {
+    if (!email) {
       return NextResponse.json(
-        { error: 'Email and password are required.' },
+        { error: 'Email address is required.' },
         { status: 400 }
       );
     }
@@ -35,12 +36,50 @@ export async function POST(request: Request) {
 
     if (userRes.rows.length === 0) {
       return NextResponse.json(
-        { error: 'Invalid email or password.' },
-        { status: 401 }
+        { error: 'No account found with this email address. Please register.' },
+        { status: 404 }
       );
     }
 
     const user = userRes.rows[0];
+
+    // Mode A: Direct Email OTP Request (Passwordless or 1-click email OTP)
+    if (directOtp) {
+      const otpCode = generate2FAOTP();
+      const otpId = crypto.randomUUID();
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+
+      await client.query(
+        `UPDATE two_factor_otps SET verified = true WHERE user_id = $1 AND purpose = 'login_2fa'`,
+        [user.id]
+      );
+
+      await client.query(
+        `INSERT INTO two_factor_otps (id, user_id, otp_code, destination, method, purpose, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [otpId, user.id, otpCode, cleanEmail, 'email', 'login_2fa', expiresAt]
+      );
+
+      // Dispatch real email via Nodemailer/SMTP
+      await send2FAEmail(cleanEmail, otpCode, user.name);
+
+      return NextResponse.json({
+        requires2FA: true,
+        userId: user.id,
+        method: 'email',
+        maskedDestination: maskContact(cleanEmail, 'email'),
+        message: `A 6-digit login verification code was sent to ${maskContact(cleanEmail, 'email')}.`,
+        debugOtp: process.env.NODE_ENV !== 'production' ? otpCode : undefined,
+      });
+    }
+
+    // Mode B: Standard Password Verification
+    if (!password) {
+      return NextResponse.json(
+        { error: 'Password is required.' },
+        { status: 400 }
+      );
+    }
 
     // Verify constant-time Scrypt password
     const isMatch = verifyPassword(password, user.password_hash, user.salt);
@@ -51,7 +90,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // Check if 2FA is active
+    // Check if 2FA / MFA is active
     if (user.two_factor_enabled) {
       const otpCode = generate2FAOTP();
       const otpId = crypto.randomUUID();
@@ -60,20 +99,23 @@ export async function POST(request: Request) {
       const method = (user.two_factor_method || 'email') as 'email' | 'mobile';
       const destination = method === 'mobile' ? (user.phone || user.email) : user.email;
 
-      // Invalidate any previous login OTPs for this user
+      // Invalidate previous pending OTPs
       await client.query(
         `UPDATE two_factor_otps SET verified = true WHERE user_id = $1 AND purpose = 'login_2fa'`,
         [user.id]
       );
 
-      // Insert fresh OTP
       await client.query(
         `INSERT INTO two_factor_otps (id, user_id, otp_code, destination, method, purpose, expires_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [otpId, user.id, otpCode, destination, method, 'login_2fa', expiresAt]
       );
 
-      // Simulated secure dispatch (Logged to server console for testing)
+      // Dispatch real email via Nodemailer/SMTP
+      if (method === 'email' || !user.phone) {
+        await send2FAEmail(destination, otpCode, user.name);
+      }
+
       console.log(`[Fundflow 2FA Security] Generated OTP for user ${user.email} (${method} -> ${destination}): ${otpCode}`);
 
       return NextResponse.json({
@@ -82,7 +124,6 @@ export async function POST(request: Request) {
         method,
         maskedDestination: maskContact(destination, method),
         message: `A 6-digit verification code was sent to your ${method === 'mobile' ? 'mobile number' : 'email address'}.`,
-        // In development/demo, provide the debug code so user is never locked out
         debugOtp: process.env.NODE_ENV !== 'production' ? otpCode : undefined,
       });
     }

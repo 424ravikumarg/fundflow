@@ -2,9 +2,11 @@
 
 import React from 'react';
 import { useTimeframe } from '@/app/context/TimeframeContext';
+import { useAuth } from '@/app/context/AuthContext';
 
 export default function TopBar() {
   const { timeframe, setTimeframe, availablePeriods } = useTimeframe();
+  const { user } = useAuth();
 
   const now = new Date();
   const currentYear = now.getFullYear();
@@ -20,7 +22,7 @@ export default function TopBar() {
           Workspace:
         </span>
         <span className="text-xs font-bold text-gray-800">
-          Personal Vault
+          {user ? `${user.name}'s Vault` : "Personal Vault"}
         </span>
       </div>
 

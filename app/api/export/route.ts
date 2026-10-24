@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
+import { getSessionUser } from '@/lib/auth';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -7,13 +8,17 @@ export async function GET(request: Request) {
 
   let client;
   try {
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
     let csvContent = '';
     const NL = String.fromCharCode(10);
 
     if (type === 'transactions') {
       const res = await client.query(
-        "SELECT to_char(date, 'YYYY-MM-DD') as date, merchant, amount, type, category, source FROM transactions ORDER BY date DESC"
+        "SELECT to_char(date, 'YYYY-MM-DD') as date, merchant, amount, type, category, source FROM transactions WHERE user_id = $1 ORDER BY date DESC",
+        [userId]
       );
       csvContent = 'Date,Merchant,Amount,Type,Category,Source' + NL;
       csvContent += res.rows
@@ -28,7 +33,8 @@ export async function GET(request: Request) {
         .join(NL);
     } else if (type === 'subscriptions') {
       const res = await client.query(
-        'SELECT name, amount, billing_cycle, category, to_char(next_billing_date, \'YYYY-MM-DD\') as next_billing_date, status FROM subscriptions ORDER BY next_billing_date ASC'
+        'SELECT name, amount, billing_cycle, category, to_char(next_billing_date, \'YYYY-MM-DD\') as next_billing_date, status FROM subscriptions WHERE user_id = $1 ORDER BY next_billing_date ASC',
+        [userId]
       );
       csvContent = 'Name,Amount,Billing Cycle,Category,Next Billing Date,Status' + NL;
       csvContent += res.rows
@@ -40,7 +46,7 @@ export async function GET(request: Request) {
         })
         .join(NL);
     } else if (type === 'budgets') {
-      const res = await client.query('SELECT category, monthly_limit FROM budgets ORDER BY category ASC');
+      const res = await client.query('SELECT category, monthly_limit FROM budgets WHERE user_id = $1 ORDER BY category ASC', [userId]);
       csvContent = 'Category,Monthly Limit,Spent,Remaining' + NL;
       csvContent += res.rows
         .map((r) => {

@@ -1,7 +1,8 @@
 /**
  * Fundflow Email Dispatcher Service
- * Supports SMTP/HTTP Email APIs (Resend, SendGrid) and console fallback.
+ * Supports SMTP (via Nodemailer), HTTP APIs (Resend, SendGrid), and console fallback.
  */
+import nodemailer from 'nodemailer';
 
 export interface SendEmailOptions {
   to: string;
@@ -11,7 +12,38 @@ export interface SendEmailOptions {
 }
 
 export async function sendEmail({ to, subject, html, text }: SendEmailOptions): Promise<{ success: boolean; error?: string }> {
-  // 1. Try Resend API if configured
+  // 1. Try SMTP via Nodemailer if configured
+  if (process.env.SMTP_HOST && process.env.SMTP_USER) {
+    try {
+      const port = Number(process.env.SMTP_PORT) || 587;
+      const secure = process.env.SMTP_SECURE === 'true' || port === 465;
+
+      const transporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST,
+        port,
+        secure,
+        auth: {
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASS,
+        },
+      });
+
+      await transporter.sendMail({
+        from: process.env.EMAIL_FROM || `Fundflow Security <${process.env.SMTP_USER}>`,
+        to,
+        subject,
+        html,
+        text: text || subject,
+      });
+
+      console.log(`[Fundflow Email] Sent email via SMTP (${process.env.SMTP_HOST}) to ${to}`);
+      return { success: true };
+    } catch (err: any) {
+      console.warn('[Fundflow Email] SMTP dispatch failed:', err.message);
+    }
+  }
+
+  // 2. Try Resend API if configured
   if (process.env.RESEND_API_KEY) {
     try {
       const res = await fetch('https://api.resend.com/emails', {
@@ -37,7 +69,7 @@ export async function sendEmail({ to, subject, html, text }: SendEmailOptions): 
     }
   }
 
-  // 2. Try SendGrid API if configured
+  // 3. Try SendGrid API if configured
   if (process.env.SENDGRID_API_KEY) {
     try {
       const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
@@ -65,7 +97,7 @@ export async function sendEmail({ to, subject, html, text }: SendEmailOptions): 
     }
   }
 
-  // 3. Fallback: Log formatted 2FA email to server console
+  // 4. Fallback: Log formatted 2FA email to server console
   console.log('====================================================');
   console.log(`📨 [Fundflow 2FA Email] Dispatching to: ${to}`);
   console.log(`📌 Subject: ${subject}`);
@@ -103,7 +135,7 @@ export async function send2FAEmail(toEmail: string, otpCode: string, userName?: 
         <div class="container">
           <div class="header">
             <div class="logo">F</div>
-            <h1 class="title">Two-Factor Verification</h1>
+            <h1 class="title">Security Verification</h1>
             <p style="font-size: 12px; color: #6B7280; margin: 0;">Hi ${userName || 'there'}, protect your account</p>
           </div>
           <p class="text">Your one-time 6-digit verification code is:</p>
@@ -112,7 +144,7 @@ export async function send2FAEmail(toEmail: string, otpCode: string, userName?: 
             <div class="expiry">Valid for 5 minutes</div>
           </div>
           <p class="text" style="font-size: 12px; color: #6B7280;">
-            Never share this code with anyone. If you did not request this, please change your password.
+            Never share this code with anyone. If you did not request this, please change your password immediately.
           </p>
           <div class="footer">
             Fundflow — Smart Cash Flow & Financial Intelligence
@@ -122,7 +154,7 @@ export async function send2FAEmail(toEmail: string, otpCode: string, userName?: 
     </html>
   `;
 
-  const text = `Your Fundflow verification code is: ${otpCode}. Valid for 5 minutes.`;
+  const text = `Your Fundflow verification code is: ${otpCode}. It expires in 5 minutes. Never share this code.`;
 
   return sendEmail({
     to: toEmail,

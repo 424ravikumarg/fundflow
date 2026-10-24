@@ -212,7 +212,64 @@ export async function ensureAuthTables(client: any) {
       created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
       updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
     );
+
+    DO $$ 
+    BEGIN 
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'transactions' AND column_name = 'user_id') THEN 
+        ALTER TABLE transactions ADD COLUMN user_id UUID; 
+      END IF; 
+
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'uploaded_files' AND column_name = 'user_id') THEN 
+        ALTER TABLE uploaded_files ADD COLUMN user_id UUID; 
+      END IF; 
+
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'documents' AND column_name = 'user_id') THEN 
+        ALTER TABLE documents ADD COLUMN user_id UUID; 
+      END IF; 
+
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'subscriptions' AND column_name = 'user_id') THEN 
+        ALTER TABLE subscriptions ADD COLUMN user_id UUID; 
+      END IF; 
+
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'loans' AND column_name = 'user_id') THEN 
+        ALTER TABLE loans ADD COLUMN user_id UUID; 
+      END IF; 
+
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'assets' AND column_name = 'user_id') THEN 
+        ALTER TABLE assets ADD COLUMN user_id UUID; 
+      END IF; 
+
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'budgets' AND column_name = 'user_id') THEN 
+        ALTER TABLE budgets ADD COLUMN user_id UUID; 
+      END IF; 
+
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'rules' AND column_name = 'user_id') THEN 
+        ALTER TABLE rules ADD COLUMN user_id UUID; 
+      END IF; 
+
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'goals' AND column_name = 'user_id') THEN 
+        ALTER TABLE goals ADD COLUMN user_id UUID; 
+      END IF; 
+
+      ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_fingerprint_key;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'transactions_user_fingerprint_key') THEN
+        ALTER TABLE transactions ADD CONSTRAINT transactions_user_fingerprint_key UNIQUE (user_id, fingerprint);
+      END IF;
+
+      ALTER TABLE budgets DROP CONSTRAINT IF EXISTS budgets_category_key;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'budgets_user_category_key') THEN
+        ALTER TABLE budgets ADD CONSTRAINT budgets_user_category_key UNIQUE (user_id, category);
+      END IF; 
+    END $$;
   `);
+}
+
+/**
+ * Convenience helper to get the authenticated user's ID
+ */
+export async function getAuthUserId(request: Request): Promise<string | null> {
+  const user = await getSessionUser(request);
+  return user?.id || null;
 }
 
 /**

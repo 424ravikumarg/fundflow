@@ -52,6 +52,7 @@ export async function POST(
     return NextResponse.json({
       success: true,
       password: decryptedPassword,
+      decryptedPassword,
     });
   } catch (err: any) {
     console.error('Reveal Password Error:', err);

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
+import { getSessionUser } from '@/lib/auth';
 
 async function ensureTableExists(client: any) {
   await client.query(`
@@ -15,21 +16,35 @@ async function ensureTableExists(client: any) {
 
     CREATE TABLE IF NOT EXISTS rules (
       id UUID PRIMARY KEY,
+      user_id UUID,
       keyword VARCHAR(255) NOT NULL,
       category VARCHAR(100) NOT NULL,
       created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
     );
+
+    DO $$ 
+    BEGIN 
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'rules' AND column_name = 'user_id'
+      ) THEN 
+        ALTER TABLE rules ADD COLUMN user_id UUID; 
+      END IF; 
+    END $$;
   `);
 }
 
 // 1. GET: Fetch all categorization rules
-export async function GET() {
+export async function GET(request: Request) {
   let client;
   try {
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
     await ensureTableExists(client);
 
-    const result = await client.query('SELECT * FROM rules ORDER BY created_at DESC');
+    const result = await client.query('SELECT * FROM rules WHERE user_id = $1 ORDER BY created_at DESC', [userId]);
     return NextResponse.json(result.rows || []);
   } catch (error: any) {
     console.error('Rules GET Error:', error);
@@ -56,6 +71,9 @@ export async function POST(request: Request) {
       );
     }
 
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     const id = crypto.randomUUID();
     const cleanKeyword = keyword.trim().toLowerCase();
     const cleanCategory = category.trim();
@@ -64,20 +82,20 @@ export async function POST(request: Request) {
     await ensureTableExists(client);
 
     const existing = await client.query(
-      'SELECT id FROM rules WHERE LOWER(keyword) = $1',
-      [cleanKeyword]
+      'SELECT id FROM rules WHERE LOWER(keyword) = $1 AND user_id = $2',
+      [cleanKeyword, userId]
     );
 
     let result;
     if (existing.rows.length > 0) {
       result = await client.query(
-        'UPDATE rules SET category = $1 WHERE id = $2 RETURNING *',
-        [cleanCategory, existing.rows[0].id]
+        'UPDATE rules SET category = $1 WHERE id = $2 AND user_id = $3 RETURNING *',
+        [cleanCategory, existing.rows[0].id, userId]
       );
     } else {
       result = await client.query(
-        'INSERT INTO rules (id, keyword, category) VALUES ($1, $2, $3) RETURNING *',
-        [id, cleanKeyword, cleanCategory]
+        'INSERT INTO rules (id, user_id, keyword, category) VALUES ($1, $2, $3, $4) RETURNING *',
+        [id, userId, cleanKeyword, cleanCategory]
       );
     }
 
@@ -104,6 +122,9 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: 'Missing rule ID' }, { status: 400 });
     }
 
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
     await ensureTableExists(client);
 
@@ -112,12 +133,13 @@ export async function PATCH(request: Request) {
        SET 
          keyword = COALESCE($1, keyword),
          category = COALESCE($2, category)
-       WHERE id = $3 
+       WHERE id = $3 AND user_id = $4
        RETURNING *`,
       [
         keyword !== undefined ? keyword.trim().toLowerCase() : null,
         category !== undefined ? category.trim() : null,
         id,
+        userId,
       ]
     );
 
@@ -148,8 +170,11 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: 'Missing rule ID' }, { status: 400 });
     }
 
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
-    await client.query('DELETE FROM rules WHERE id = $1', [id]);
+    await client.query('DELETE FROM rules WHERE id = $1 AND user_id = $2', [id, userId]);
 
     return NextResponse.json({ success: true });
   } catch (error: any) {

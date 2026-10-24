@@ -3,6 +3,7 @@ export const runtime = 'nodejs';
 
 import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
+import { getSessionUser } from '@/lib/auth';
 import * as XLSX from 'xlsx';
 import mammoth from 'mammoth';
 import { getDocumentProxy, extractText, extractTextItems } from 'unpdf';
@@ -588,6 +589,9 @@ export async function POST(request: Request) {
     const file = formData.get('file') as File | null;
     if (!file) return NextResponse.json({ error: 'No file provided' }, { status: 400 });
 
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     const password = (formData.get('password') as string | null) || undefined;
     const filename = file.name;
     const extension = filename.split('.').pop()?.toLowerCase() || '';
@@ -608,13 +612,15 @@ export async function POST(request: Request) {
         fingerprint VARCHAR(255),
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
+      ALTER TABLE transactions ADD COLUMN IF NOT EXISTS user_id UUID;
+      ALTER TABLE transactions ADD COLUMN IF NOT EXISTS filename VARCHAR(255);
       ALTER TABLE transactions ADD COLUMN IF NOT EXISTS source VARCHAR(100) DEFAULT 'Import';
       ALTER TABLE transactions ADD COLUMN IF NOT EXISTS fingerprint VARCHAR(255);
     `);
 
     let userRules: any[] = [];
     try {
-      const rulesRes = await client.query('SELECT keyword, category FROM rules');
+      const rulesRes = await client.query('SELECT keyword, category FROM rules WHERE user_id = $1', [userId]);
       userRules = rulesRes.rows || [];
     } catch {
       // rules optional
@@ -719,20 +725,37 @@ export async function POST(request: Request) {
         .update(`${t.date}_${t.amount}_${t.type}_${t.merchant.toLowerCase()}`)
         .digest('hex');
 
-      // Avoid inserting exact duplicate transactions if already present
+      // Avoid inserting exact duplicate transactions if already present for this user
       const dupCheck = await client.query(
-        `SELECT 1 FROM transactions WHERE fingerprint = $1 OR (date = $2 AND amount = $3 AND type = $4 AND LOWER(merchant) = LOWER($5)) LIMIT 1`,
-        [fingerprint, t.date, t.amount, t.type, t.merchant]
+        `SELECT 1 FROM transactions 
+         WHERE user_id = $1 
+           AND (fingerprint = $2 OR (date = $3 AND amount = $4 AND type = $5 AND LOWER(merchant) = LOWER($6))) 
+         LIMIT 1`,
+        [userId, fingerprint, t.date, t.amount, t.type, t.merchant]
       );
 
       if (dupCheck.rows.length === 0) {
         await client.query(
-          `INSERT INTO transactions (id, amount, merchant, source, category, date, type, fingerprint)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [id, t.amount, t.merchant, t.source, t.category, t.date, t.type, fingerprint]
+          `INSERT INTO transactions (id, user_id, amount, merchant, source, category, date, type, fingerprint, filename)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          [id, userId, t.amount, t.merchant, t.source, t.category, t.date, t.type, fingerprint, filename]
         );
         insertedCount++;
       }
+    }
+
+    // Record uploaded file metadata scoped to user
+    try {
+      const fileId = crypto.randomUUID();
+      const fileHash = crypto.createHash('sha256').update(buffer).digest('hex');
+      await client.query(
+        `INSERT INTO uploaded_files (id, user_id, filename, file_hash, file_size, file_type, transaction_count)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (id) DO NOTHING`,
+        [fileId, userId, filename, fileHash, buffer.length, extension.toUpperCase(), insertedCount]
+      );
+    } catch (fErr) {
+      console.warn('uploaded_files insert warning:', fErr);
     }
 
     return NextResponse.json({

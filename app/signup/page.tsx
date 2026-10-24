@@ -15,6 +15,7 @@ export default function SignupPage() {
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [enableMfa, setEnableMfa] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [errorDetails, setErrorDetails] = useState<string[]>([]);
@@ -31,7 +32,7 @@ export default function SignupPage() {
 
     setIsSubmitting(true);
     try {
-      const res = await register(name.trim(), email.trim(), phone.trim(), password);
+      const res = await register(name.trim(), email.trim(), phone.trim(), password, enableMfa);
       if (res.error) {
         setErrorMsg(res.error);
         if (res.details) setErrorDetails(res.details);
@@ -141,6 +142,22 @@ export default function SignupPage() {
               {confirmPassword.length > 0 && confirmPassword !== password && (
                 <span className="text-[11px] text-rose-600 block mt-1">Passwords do not match.</span>
               )}
+            </div>
+
+            <div className="bg-purple-50/70 border border-purple-100 p-3.5 rounded-2xl flex items-start gap-2.5">
+              <input
+                type="checkbox"
+                id="enableMfa"
+                checked={enableMfa}
+                onChange={(e) => setEnableMfa(e.target.checked)}
+                className="mt-0.5 rounded text-[#6558D3] focus:ring-[#6558D3]/30 cursor-pointer w-4 h-4"
+              />
+              <label htmlFor="enableMfa" className="text-xs text-gray-700 cursor-pointer">
+                <span className="font-bold text-gray-900 block">Enable Two-Factor Authentication (Email OTP)</span>
+                <span className="text-[11px] text-gray-500 block mt-0.5">
+                  Sends a secure 6-digit one-time code to your email ID every time you sign in for enhanced protection.
+                </span>
+              </label>
             </div>
 
             <div className="pt-2">

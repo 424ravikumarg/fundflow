@@ -3,11 +3,13 @@ export const runtime = 'nodejs';
 
 import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
+import { getSessionUser } from '@/lib/auth';
 
 async function ensureAssetsTable(client: any) {
   await client.query(`
     CREATE TABLE IF NOT EXISTS assets (
       id UUID PRIMARY KEY,
+      user_id UUID,
       name VARCHAR(255) NOT NULL,
       asset_type VARCHAR(50) NOT NULL,
       category VARCHAR(100) DEFAULT 'Investment',
@@ -21,18 +23,32 @@ async function ensureAssetsTable(client: any) {
       created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
       updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
     );
+
+    DO $$ 
+    BEGIN 
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'assets' AND column_name = 'user_id'
+      ) THEN 
+        ALTER TABLE assets ADD COLUMN user_id UUID; 
+      END IF; 
+    END $$;
   `);
 }
 
 // 1. GET: Fetch all assets and portfolio summary metrics
-export async function GET() {
+export async function GET(request: Request) {
   let client;
   try {
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
     await ensureAssetsTable(client);
 
     const result = await client.query(
-      'SELECT * FROM assets ORDER BY current_value DESC, created_at DESC'
+      'SELECT * FROM assets WHERE user_id = $1 ORDER BY current_value DESC, created_at DESC',
+      [userId]
     );
     const assets = result.rows || [];
 
@@ -101,17 +117,21 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Asset name and asset type are required' }, { status: 400 });
     }
 
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
     await ensureAssetsTable(client);
 
     const id = crypto.randomUUID();
     const result = await client.query(
       `INSERT INTO assets (
-        id, name, asset_type, category, invested_amount, current_value,
+        id, user_id, name, asset_type, category, invested_amount, current_value,
         quantity, unit, monthly_contribution, institution, notes
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
       [
         id,
+        userId,
         name.trim(),
         asset_type.toLowerCase().trim(),
         category ? category.trim() : 'Investment',
@@ -157,6 +177,9 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: 'Asset ID is required' }, { status: 400 });
     }
 
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
     await ensureAssetsTable(client);
 
@@ -174,7 +197,7 @@ export async function PATCH(request: Request) {
          institution = COALESCE($9, institution),
          notes = COALESCE($10, notes),
          updated_at = NOW()
-       WHERE id::text = $11::text
+       WHERE id::text = $11::text AND user_id = $12
        RETURNING *`,
       [
         name ? name.trim() : null,
@@ -188,6 +211,7 @@ export async function PATCH(request: Request) {
         institution ? institution.trim() : null,
         notes !== undefined ? notes.trim() : null,
         id,
+        userId,
       ]
     );
 
@@ -215,10 +239,13 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: 'Asset ID is required' }, { status: 400 });
     }
 
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
     await ensureAssetsTable(client);
 
-    await client.query('DELETE FROM assets WHERE id::text = $1::text', [id]);
+    await client.query('DELETE FROM assets WHERE id::text = $1::text AND user_id = $2', [id, userId]);
     return NextResponse.json({ success: true });
   } catch (err: any) {
     console.error('Assets DELETE Error:', err);

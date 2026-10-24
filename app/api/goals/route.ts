@@ -1,27 +1,42 @@
 import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
+import { getSessionUser } from '@/lib/auth';
 
 async function ensureTableExists(client: any) {
   await client.query(`
     CREATE TABLE IF NOT EXISTS goals (
       id UUID PRIMARY KEY,
+      user_id UUID,
       name VARCHAR(255) NOT NULL,
       target_amount NUMERIC(12, 2) NOT NULL,
       current_amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
       target_date DATE NOT NULL,
       created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
     );
+
+    DO $$ 
+    BEGIN 
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'goals' AND column_name = 'user_id'
+      ) THEN 
+        ALTER TABLE goals ADD COLUMN user_id UUID; 
+      END IF; 
+    END $$;
   `);
 }
 
 // 1. GET: Fetch all goals
-export async function GET() {
+export async function GET(request: Request) {
   let client;
   try {
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
     await ensureTableExists(client);
 
-    const result = await client.query('SELECT * FROM goals ORDER BY target_date ASC');
+    const result = await client.query('SELECT * FROM goals WHERE user_id = $1 ORDER BY target_date ASC', [userId]);
     return NextResponse.json(result.rows || []);
   } catch (error: any) {
     console.error('Goals GET Error:', error);
@@ -38,15 +53,18 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { name, target_amount, current_amount, target_date } = body;
 
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     const id = crypto.randomUUID();
 
     client = await pool.connect();
     await ensureTableExists(client);
 
     const result = await client.query(
-      `INSERT INTO goals (id, name, target_amount, current_amount, target_date)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [id, name.trim(), parseFloat(target_amount), parseFloat(current_amount) || 0, target_date]
+      `INSERT INTO goals (id, user_id, name, target_amount, current_amount, target_date)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [id, userId, name.trim(), parseFloat(target_amount), parseFloat(current_amount) || 0, target_date]
     );
 
     return NextResponse.json(result.rows[0]);
@@ -69,6 +87,9 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: 'Missing goal ID' }, { status: 400 });
     }
 
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
     await ensureTableExists(client);
 
@@ -79,7 +100,7 @@ export async function PATCH(request: Request) {
          target_amount = COALESCE($2, target_amount),
          current_amount = COALESCE($3, current_amount),
          target_date = COALESCE($4, target_date)
-       WHERE id = $5 
+       WHERE id = $5 AND user_id = $6
        RETURNING *`,
       [
         name !== undefined ? name.trim() : null,
@@ -87,6 +108,7 @@ export async function PATCH(request: Request) {
         current_amount !== undefined ? parseFloat(current_amount) : null,
         target_date !== undefined ? target_date : null,
         id,
+        userId,
       ]
     );
 
@@ -114,8 +136,11 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: 'Missing goal ID' }, { status: 400 });
     }
 
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
-    await client.query('DELETE FROM goals WHERE id = $1', [id]);
+    await client.query('DELETE FROM goals WHERE id = $1 AND user_id = $2', [id, userId]);
 
     return NextResponse.json({ success: true });
   } catch (error: any) {

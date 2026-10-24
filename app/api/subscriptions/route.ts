@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
+import { getSessionUser } from '@/lib/auth';
 
 async function ensureTableExists(client: any) {
   await client.query(`
     CREATE TABLE IF NOT EXISTS subscriptions (
       id UUID PRIMARY KEY,
+      user_id UUID,
       name VARCHAR(255) NOT NULL,
       amount NUMERIC(12, 2) NOT NULL,
       billing_cycle VARCHAR(50) NOT NULL DEFAULT 'monthly',
@@ -13,18 +15,32 @@ async function ensureTableExists(client: any) {
       status VARCHAR(50) NOT NULL DEFAULT 'active',
       created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
     );
+
+    DO $$ 
+    BEGIN 
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'subscriptions' AND column_name = 'user_id'
+      ) THEN 
+        ALTER TABLE subscriptions ADD COLUMN user_id UUID; 
+      END IF; 
+    END $$;
   `);
 }
 
 // 1. GET: Fetch all recurring subscriptions
-export async function GET() {
+export async function GET(request: Request) {
   let client;
   try {
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
     await ensureTableExists(client);
 
     const result = await client.query(
-      'SELECT * FROM subscriptions ORDER BY next_billing_date ASC'
+      'SELECT * FROM subscriptions WHERE user_id = $1 ORDER BY next_billing_date ASC',
+      [userId]
     );
     return NextResponse.json(result.rows);
   } catch (error: any) {
@@ -42,15 +58,18 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { name, amount, billing_cycle, category, next_billing_date, status } = body;
 
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     const id = crypto.randomUUID();
 
     client = await pool.connect();
     await ensureTableExists(client);
 
     const result = await client.query(
-      `INSERT INTO subscriptions (id, name, amount, billing_cycle, category, next_billing_date, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [id, name, amount, billing_cycle || 'monthly', category || 'General', next_billing_date, status || 'active']
+      `INSERT INTO subscriptions (id, user_id, name, amount, billing_cycle, category, next_billing_date, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [id, userId, name, amount, billing_cycle || 'monthly', category || 'General', next_billing_date, status || 'active']
     );
 
     return NextResponse.json(result.rows[0]);
@@ -73,6 +92,9 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: 'Missing subscription ID' }, { status: 400 });
     }
 
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
     await ensureTableExists(client);
 
@@ -85,7 +107,7 @@ export async function PATCH(request: Request) {
          category = COALESCE($4, category),
          next_billing_date = COALESCE($5, next_billing_date),
          status = COALESCE($6, status)
-       WHERE id = $7 
+       WHERE id = $7 AND user_id = $8
        RETURNING *`,
       [
         name !== undefined ? name.trim() : null,
@@ -95,6 +117,7 @@ export async function PATCH(request: Request) {
         next_billing_date !== undefined ? next_billing_date : null,
         status !== undefined ? status : null,
         id,
+        userId,
       ]
     );
 
@@ -122,8 +145,11 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: 'Missing subscription ID' }, { status: 400 });
     }
 
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
-    await client.query('DELETE FROM subscriptions WHERE id = $1', [id]);
+    await client.query('DELETE FROM subscriptions WHERE id = $1 AND user_id = $2', [id, userId]);
 
     return NextResponse.json({ success: true });
   } catch (error: any) {

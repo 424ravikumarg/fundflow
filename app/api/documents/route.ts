@@ -3,6 +3,7 @@ export const runtime = 'nodejs';
 
 import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
+import { getSessionUser } from '@/lib/auth';
 import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import * as XLSX from 'xlsx';
 import mammoth from 'mammoth';
@@ -22,6 +23,7 @@ async function ensureDocumentsTable(client: any) {
   await client.query(`
     CREATE TABLE IF NOT EXISTS documents (
       id UUID PRIMARY KEY,
+      user_id UUID,
       filename VARCHAR(255) NOT NULL,
       mimetype VARCHAR(255) DEFAULT 'application/octet-stream',
       s3_key VARCHAR(255),
@@ -40,14 +42,24 @@ async function ensureDocumentsTable(client: any) {
       ) THEN 
         ALTER TABLE documents ADD COLUMN storage_provider VARCHAR(50) DEFAULT 'LOCAL'; 
       END IF; 
+
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'documents' AND column_name = 'user_id'
+      ) THEN 
+        ALTER TABLE documents ADD COLUMN user_id UUID; 
+      END IF; 
     END $$;
   `);
 }
 
 // 1. GET: List all uploaded documents
-export async function GET() {
+export async function GET(request: Request) {
   let client;
   try {
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
     await ensureDocumentsTable(client);
 
@@ -62,8 +74,9 @@ export async function GET() {
         parsed_text, 
         created_at 
       FROM documents 
+      WHERE user_id = $1
       ORDER BY created_at DESC
-    `);
+    `, [userId]);
     return NextResponse.json(result.rows || []);
   } catch (err: any) {
     console.error('Documents GET Error:', err);
@@ -188,12 +201,15 @@ export async function POST(request: Request) {
       storageKey = `storage/documents/${safeFilename}`;
     }
 
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     // --- Persist Metadata and Extracted Text in PostgreSQL ---
     const id = crypto.randomUUID();
     const result = await client.query(
-      `INSERT INTO documents (id, filename, mimetype, s3_key, file_type, file_size, parsed_text, storage_provider)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [id, filename, mimetype, storageKey, extension.toUpperCase(), buffer.length, parsedText, storageProvider]
+      `INSERT INTO documents (id, user_id, filename, mimetype, s3_key, file_type, file_size, parsed_text, storage_provider)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [id, userId, filename, mimetype, storageKey, extension.toUpperCase(), buffer.length, parsedText, storageProvider]
     );
 
     return NextResponse.json(result.rows[0]);
@@ -219,10 +235,13 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: 'Missing document ID' }, { status: 400 });
     }
 
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
     await ensureDocumentsTable(client);
 
-    const docRes = await client.query('SELECT s3_key, storage_provider FROM documents WHERE id = $1', [id]);
+    const docRes = await client.query('SELECT s3_key, storage_provider FROM documents WHERE id = $1 AND user_id = $2', [id, userId]);
     if (docRes.rows.length > 0) {
       const doc = docRes.rows[0];
       if (doc.storage_provider === 'LOCAL' && doc.s3_key) {
@@ -242,7 +261,7 @@ export async function DELETE(request: Request) {
       }
     }
 
-    await client.query('DELETE FROM documents WHERE id = $1', [id]);
+    await client.query('DELETE FROM documents WHERE id = $1 AND user_id = $2', [id, userId]);
     return NextResponse.json({ success: true });
   } catch (err: any) {
     console.error('Documents DELETE Error:', err);
@@ -266,10 +285,13 @@ export async function PATCH(request: Request) {
       );
     }
 
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
     await ensureDocumentsTable(client);
 
-    const oldDocRes = await client.query('SELECT filename FROM documents WHERE id = $1', [id]);
+    const oldDocRes = await client.query('SELECT filename FROM documents WHERE id = $1 AND user_id = $2', [id, userId]);
     if (oldDocRes.rows.length === 0) {
       return NextResponse.json({ error: 'Document not found' }, { status: 404 });
     }
@@ -279,8 +301,8 @@ export async function PATCH(request: Request) {
 
     // Update the document record
     const result = await client.query(
-      'UPDATE documents SET filename = $1 WHERE id = $2 RETURNING *',
-      [cleanFilename, id]
+      'UPDATE documents SET filename = $1 WHERE id = $2 AND user_id = $3 RETURNING *',
+      [cleanFilename, id, userId]
     );
 
     // Synchronously update any matching transactions imported from this filename
@@ -299,11 +321,12 @@ export async function PATCH(request: Request) {
                WHEN source = $5::text THEN $6::text 
                ELSE source 
              END 
-         WHERE filename = $2::text 
+         WHERE (filename = $2::text 
             OR source = $2::text 
             OR source = $3::text 
-            OR source = $5::text`,
-        [cleanFilename, oldFilename, oldColon, newColon, oldParen, newParen]
+            OR source = $5::text)
+           AND user_id = $7`,
+        [cleanFilename, oldFilename, oldColon, newColon, oldParen, newParen, userId]
       );
     } catch (e) {
       console.warn('Sync transactions filename notice:', e);

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
+import { getSessionUser } from '@/lib/auth';
 
 async function ensureTransactionsTable(client: any) {
   await client.query(`
@@ -80,6 +81,9 @@ export async function GET(request: Request) {
     const getFiles = searchParams.get('files');
     const getPeriods = searchParams.get('periods');
 
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
     await ensureTransactionsTable(client);
 
@@ -91,10 +95,10 @@ export async function GET(request: Request) {
           EXTRACT(MONTH FROM date)::int as month,
           COUNT(*)::int as count
         FROM transactions
-        WHERE date IS NOT NULL
+        WHERE date IS NOT NULL AND user_id = $1
         GROUP BY to_char(date, 'YYYY-MM'), EXTRACT(YEAR FROM date), EXTRACT(MONTH FROM date)
         ORDER BY month_key DESC
-      `);
+      `, [userId]);
 
       const MONTH_NAMES = [
         'January', 'February', 'March', 'April', 'May', 'June',
@@ -122,19 +126,21 @@ export async function GET(request: Request) {
           to_char(MAX(t.date), 'YYYY-MM-DD') as end_date,
           to_char(MIN(t.created_at), 'YYYY-MM-DD HH24:MI') as imported_at
         FROM transactions t
-        WHERE (t.filename IS NOT NULL AND t.filename != '') 
+        WHERE ((t.filename IS NOT NULL AND t.filename != '') 
            OR (t.source LIKE 'Import%') 
            OR (t.source LIKE '%.pdf%') 
            OR (t.source LIKE '%.csv%')
-           OR (t.source LIKE '%.xlsx%')
+           OR (t.source LIKE '%.xlsx%'))
+          AND t.user_id = $1
         GROUP BY COALESCE(NULLIF(t.filename, ''), t.source)
         ORDER BY MIN(t.created_at) DESC
-      `);
+      `, [userId]);
       return NextResponse.json(filesRes.rows || []);
     }
 
     const result = await client.query(
-      "SELECT id, amount, merchant, source, filename, category, to_char(date, 'YYYY-MM-DD') as date, type, fingerprint, created_at FROM transactions ORDER BY date DESC, created_at DESC LIMIT 2500"
+      "SELECT id, amount, merchant, source, filename, category, to_char(date, 'YYYY-MM-DD') as date, type, fingerprint, created_at FROM transactions WHERE user_id = $1 ORDER BY date DESC, created_at DESC LIMIT 2500",
+      [userId]
     );
     return NextResponse.json(result.rows || []);
   } catch (error: any) {
@@ -155,13 +161,16 @@ export async function POST(request: Request) {
     const id = crypto.randomUUID();
     const fingerprint = crypto.randomUUID();
 
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
     await ensureTransactionsTable(client);
 
     const result = await client.query(
-      `INSERT INTO transactions (id, amount, merchant, source, category, date, type, fingerprint, filename) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-      [id, parseFloat(amount), merchant.trim(), 'Manual Entry', category || 'General', date, type || 'expense', fingerprint, 'Manual Entry']
+      `INSERT INTO transactions (id, user_id, amount, merchant, source, category, date, type, fingerprint, filename) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+      [id, userId, parseFloat(amount), merchant.trim(), 'Manual Entry', category || 'General', date, type || 'expense', fingerprint, 'Manual Entry']
     );
 
     return NextResponse.json(result.rows[0]);
@@ -179,6 +188,9 @@ export async function PATCH(request: Request) {
   try {
     const body = await request.json();
     const { id, amount, merchant, category, date, type, oldFilename, newFilename, renameFile } = body;
+
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
 
     client = await pool.connect();
     await ensureTransactionsTable(client);
@@ -205,17 +217,18 @@ export async function PATCH(request: Request) {
                WHEN source = $5::text THEN $6::text 
                ELSE source 
              END 
-         WHERE filename = $2::text 
+         WHERE (filename = $2::text 
             OR source = $2::text 
             OR source = $3::text 
-            OR source = $5::text`,
-        [cleanNew, cleanOld, oldColon, newColon, oldParen, newParen]
+            OR source = $5::text)
+           AND user_id = $7`,
+        [cleanNew, cleanOld, oldColon, newColon, oldParen, newParen, userId]
       );
 
       try {
         await client.query(
-          'UPDATE uploaded_files SET filename = $1::text WHERE filename = $2::text',
-          [cleanNew, cleanOld]
+          'UPDATE uploaded_files SET filename = $1::text WHERE filename = $2::text AND user_id = $3',
+          [cleanNew, cleanOld, userId]
         );
       } catch (e) {
         console.warn('uploaded_files update warning:', e);
@@ -223,8 +236,8 @@ export async function PATCH(request: Request) {
 
       try {
         await client.query(
-          'UPDATE documents SET filename = $1::text WHERE filename = $2::text',
-          [cleanNew, cleanOld]
+          'UPDATE documents SET filename = $1::text WHERE filename = $2::text AND user_id = $3',
+          [cleanNew, cleanOld, userId]
         );
       } catch (e) {
         console.warn('documents update warning:', e);
@@ -249,7 +262,7 @@ export async function PATCH(request: Request) {
          category = COALESCE($3, category),
          date = COALESCE($4, date),
          type = COALESCE($5, type)
-       WHERE id::text = $6::text 
+       WHERE id::text = $6::text AND user_id = $7
        RETURNING *`,
       [
         amount !== undefined && amount !== null && amount !== '' ? parseFloat(amount) : null,
@@ -258,6 +271,7 @@ export async function PATCH(request: Request) {
         date !== undefined ? date : null,
         type !== undefined ? type : null,
         id,
+        userId,
       ]
     );
 
@@ -285,6 +299,9 @@ export async function DELETE(request: Request) {
     const dedupe = searchParams.get('dedupe');
     const fileToClean = searchParams.get('filename') || searchParams.get('file');
 
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
     await ensureTransactionsTable(client);
 
@@ -306,8 +323,8 @@ export async function DELETE(request: Request) {
 
     if (idsToDelete.length > 0) {
       const res = await client.query(
-        'DELETE FROM transactions WHERE id::text = ANY($1::text[])',
-        [idsToDelete]
+        'DELETE FROM transactions WHERE id::text = ANY($1::text[]) AND user_id = $2',
+        [idsToDelete, userId]
       );
       return NextResponse.json({
         success: true,
@@ -321,11 +338,13 @@ export async function DELETE(request: Request) {
       const res = await client.query(`
         DELETE FROM transactions a USING transactions b
         WHERE a.ctid < b.ctid
+          AND a.user_id = $1
+          AND b.user_id = $1
           AND a.date = b.date
           AND a.amount = b.amount
           AND a.type = b.type
           AND LOWER(a.merchant) = LOWER(b.merchant)
-      `);
+      `, [userId]);
       return NextResponse.json({
         success: true,
         message: `Removed ${res.rowCount || 0} duplicate transaction(s).`,
@@ -337,16 +356,17 @@ export async function DELETE(request: Request) {
     if (fileToClean) {
       const res = await client.query(
         `DELETE FROM transactions 
-         WHERE filename = $1 
+         WHERE (filename = $1 
             OR source = $1 
             OR source = 'Import: ' || $1 
             OR source = 'Import (' || $1 || ')'
-            OR file_id::text = $1`,
-        [fileToClean]
+            OR file_id::text = $1)
+           AND user_id = $2`,
+        [fileToClean, userId]
       );
       await client.query(
-        'DELETE FROM uploaded_files WHERE filename = $1 OR id::text = $1',
-        [fileToClean]
+        'DELETE FROM uploaded_files WHERE (filename = $1 OR id::text = $1) AND user_id = $2',
+        [fileToClean, userId]
       );
       return NextResponse.json({
         success: true,
@@ -356,18 +376,19 @@ export async function DELETE(request: Request) {
     }
 
     if (clearAll === 'true') {
-      await client.query('DELETE FROM transactions');
-      await client.query('DELETE FROM uploaded_files');
+      await client.query('DELETE FROM transactions WHERE user_id = $1', [userId]);
+      await client.query('DELETE FROM uploaded_files WHERE user_id = $1', [userId]);
       return NextResponse.json({ success: true, message: 'All transactions cleared' });
     }
 
     if (clearImports === 'true') {
       await client.query(`
         DELETE FROM transactions 
-        WHERE source LIKE 'Import%' 
-           OR (filename IS NOT NULL AND filename != '' AND filename != 'Manual Entry')
-      `);
-      await client.query('DELETE FROM uploaded_files');
+        WHERE (source LIKE 'Import%' 
+           OR (filename IS NOT NULL AND filename != '' AND filename != 'Manual Entry'))
+          AND user_id = $1
+      `, [userId]);
+      await client.query('DELETE FROM uploaded_files WHERE user_id = $1', [userId]);
       return NextResponse.json({ success: true, message: 'All imported transactions cleared' });
     }
 
@@ -375,7 +396,7 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: 'Missing transaction ID or filename' }, { status: 400 });
     }
 
-    await client.query('DELETE FROM transactions WHERE id::text = $1::text', [id]);
+    await client.query('DELETE FROM transactions WHERE id::text = $1::text AND user_id = $2', [id, userId]);
     return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error('Database DELETE Error:', error);

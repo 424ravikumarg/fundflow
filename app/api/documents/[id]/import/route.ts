@@ -3,6 +3,7 @@ export const runtime = 'nodejs';
 
 import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
+import { getSessionUser } from '@/lib/auth';
 import crypto from 'crypto';
 
 interface ImportTxnPayload {
@@ -32,21 +33,17 @@ export async function POST(
       );
     }
 
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
 
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS transactions (
-        id UUID PRIMARY KEY,
-        amount NUMERIC(12, 2) NOT NULL,
-        merchant VARCHAR(255) NOT NULL,
-        source VARCHAR(255) DEFAULT 'Imported Statement',
-        category VARCHAR(100) DEFAULT 'General',
-        date DATE NOT NULL,
-        type VARCHAR(50) NOT NULL,
-        fingerprint VARCHAR(64),
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-      );
-    `);
+    // Check document ownership & get filename
+    let docFilename = 'Imported Statement';
+    const docRes = await client.query('SELECT filename FROM documents WHERE id = $1 AND user_id = $2', [docId, userId]);
+    if (docRes.rows.length > 0) {
+      docFilename = docRes.rows[0].filename;
+    }
 
     let insertedCount = 0;
     let duplicateCount = 0;
@@ -57,7 +54,7 @@ export async function POST(
       const amount = Math.round(Number(t.amount) * 100) / 100;
       const type = t.type === 'income' ? 'income' : 'expense';
       const category = t.category || 'General';
-      const source = t.source || 'Vault Statement';
+      const source = t.source || `Import: ${docFilename}`;
       const date = t.date;
 
       const fingerprint = crypto
@@ -65,20 +62,21 @@ export async function POST(
         .update(`${date}_${amount}_${type}_${cleanMerchant.toLowerCase()}`)
         .digest('hex');
 
-      // Check for exact duplicate fingerprint or matching transaction row
+      // Check for exact duplicate fingerprint or matching transaction row for this user
       const dupCheck = await client.query(
         `SELECT 1 FROM transactions 
-         WHERE fingerprint = $1 
-            OR (date = $2 AND amount = $3 AND type = $4 AND LOWER(merchant) = LOWER($5)) 
+         WHERE user_id = $1 
+           AND (fingerprint = $2 
+             OR (date = $3 AND amount = $4 AND type = $5 AND LOWER(merchant) = LOWER($6))) 
          LIMIT 1`,
-        [fingerprint, date, amount, type, cleanMerchant]
+        [userId, fingerprint, date, amount, type, cleanMerchant]
       );
 
       if (dupCheck.rows.length === 0) {
         await client.query(
-          `INSERT INTO transactions (id, amount, merchant, source, category, date, type, fingerprint)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [id, amount, cleanMerchant, source, category, date, type, fingerprint]
+          `INSERT INTO transactions (id, user_id, amount, merchant, source, category, date, type, fingerprint, filename)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          [id, userId, amount, cleanMerchant, source, category, date, type, fingerprint, docFilename]
         );
         insertedCount++;
       } else {

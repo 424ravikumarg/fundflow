@@ -3,6 +3,7 @@ export const runtime = 'nodejs';
 
 import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
+import { getSessionUser } from '@/lib/auth';
 import { parseStatementFile } from '@/lib/statement-parser';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import fs from 'fs';
@@ -27,10 +28,13 @@ export async function POST(
     const body = await request.json().catch(() => ({}));
     const password = body.password || undefined;
 
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
 
-    // 1. Fetch document record
-    const docRes = await client.query('SELECT * FROM documents WHERE id = $1', [id]);
+    // 1. Fetch document record scoped to user
+    const docRes = await client.query('SELECT * FROM documents WHERE id = $1 AND user_id = $2', [id, userId]);
     if (docRes.rows.length === 0) {
       return NextResponse.json({ error: 'Document not found' }, { status: 404 });
     }
@@ -75,7 +79,7 @@ export async function POST(
     // 3. Fetch user categorization rules
     let userRules: any[] = [];
     try {
-      const rulesRes = await client.query('SELECT keyword, category FROM rules');
+      const rulesRes = await client.query('SELECT keyword, category FROM rules WHERE user_id = $1', [userId]);
       userRules = rulesRes.rows;
     } catch {
       userRules = [];

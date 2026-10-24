@@ -27,7 +27,8 @@ interface AuthContextType {
   user: AuthUser | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<LoginResult>;
-  register: (name: string, email: string, phone: string, password: string) => Promise<{ success?: boolean; error?: string; details?: string[] }>;
+  loginWithOtp: (email: string) => Promise<LoginResult>;
+  register: (name: string, email: string, phone: string, password: string, enableMfa?: boolean) => Promise<{ success?: boolean; error?: string; details?: string[] }>;
   verify2FA: (userId: string, otpCode: string, purpose?: string) => Promise<{ success: boolean; error?: string }>;
   requestOtp: (userId: string, purpose?: string, method?: "email" | "mobile") => Promise<{ success: boolean; message?: string; debugOtp?: string; error?: string }>;
   logout: () => Promise<void>;
@@ -93,12 +94,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const register = async (name: string, email: string, phone: string, password: string) => {
+  const loginWithOtp = async (email: string): Promise<LoginResult> => {
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, directOtp: true }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        return { error: data.error || "Failed to dispatch login OTP" };
+      }
+
+      return {
+        requires2FA: true,
+        userId: data.userId,
+        method: data.method || "email",
+        maskedDestination: data.maskedDestination,
+        message: data.message,
+        debugOtp: data.debugOtp,
+      };
+    } catch (err: any) {
+      return { error: err.message || "Network error requesting OTP" };
+    }
+  };
+
+  const register = async (name: string, email: string, phone: string, password: string, enableMfa = true) => {
     try {
       const res = await fetch("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, phone, password }),
+        body: JSON.stringify({ name, email, phone, password, enableMfa }),
       });
       const data = await res.json();
 
@@ -167,6 +194,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         user,
         loading,
         login,
+        loginWithOtp,
         register,
         verify2FA,
         requestOtp,

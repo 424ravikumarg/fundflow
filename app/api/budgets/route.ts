@@ -1,14 +1,33 @@
 import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
+import { getSessionUser } from '@/lib/auth';
 
 async function ensureTableExists(client: any) {
   await client.query(`
     CREATE TABLE IF NOT EXISTS budgets (
       id UUID PRIMARY KEY,
-      category VARCHAR(100) UNIQUE NOT NULL,
+      user_id UUID,
+      category VARCHAR(100) NOT NULL,
       monthly_limit NUMERIC(12, 2) NOT NULL,
       created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
     );
+
+    DO $$ 
+    BEGIN 
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'budgets' AND column_name = 'user_id'
+      ) THEN 
+        ALTER TABLE budgets ADD COLUMN user_id UUID; 
+      END IF; 
+
+      ALTER TABLE budgets DROP CONSTRAINT IF EXISTS budgets_category_key;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'budgets_user_category_key'
+      ) THEN
+        ALTER TABLE budgets ADD CONSTRAINT budgets_user_category_key UNIQUE (user_id, category);
+      END IF;
+    END $$;
   `);
 }
 
@@ -19,6 +38,9 @@ export async function GET(request: Request) {
 
   let client;
   try {
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
     await ensureTableExists(client);
 
@@ -43,10 +65,11 @@ export async function GET(request: Request) {
           ), 0
         ) AS spent
       FROM budgets b
-      LEFT JOIN transactions t ON LOWER(b.category) = LOWER(t.category)
+      LEFT JOIN transactions t ON LOWER(b.category) = LOWER(t.category) AND t.user_id = $2
+      WHERE b.user_id = $2
       GROUP BY b.id, b.category, b.monthly_limit
       ORDER BY b.category ASC;
-    `, [monthParam || null]);
+    `, [monthParam || null, userId]);
 
     return NextResponse.json(result.rows);
   } catch (error: any) {
@@ -64,18 +87,21 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { category, monthly_limit } = body;
 
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     const id = crypto.randomUUID();
 
     client = await pool.connect();
     await ensureTableExists(client);
 
     const result = await client.query(
-      `INSERT INTO budgets (id, category, monthly_limit)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (category) 
+      `INSERT INTO budgets (id, user_id, category, monthly_limit)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (user_id, category) 
        DO UPDATE SET monthly_limit = EXCLUDED.monthly_limit
        RETURNING *`,
-      [id, category.trim(), parseFloat(monthly_limit)]
+      [id, userId, category.trim(), parseFloat(monthly_limit)]
     );
 
     return NextResponse.json(result.rows[0]);
@@ -98,6 +124,9 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: 'Missing budget ID' }, { status: 400 });
     }
 
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
     await ensureTableExists(client);
 
@@ -106,12 +135,13 @@ export async function PATCH(request: Request) {
        SET 
          category = COALESCE($1, category),
          monthly_limit = COALESCE($2, monthly_limit)
-       WHERE id::text = $3::text 
+       WHERE id::text = $3::text AND user_id = $4
        RETURNING *`,
       [
         category !== undefined ? category.trim() : null,
         monthly_limit !== undefined ? parseFloat(monthly_limit) : null,
         id,
+        userId,
       ]
     );
 
@@ -139,8 +169,11 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: 'Missing budget ID' }, { status: 400 });
     }
 
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
-    await client.query('DELETE FROM budgets WHERE id::text = $1::text', [id]);
+    await client.query('DELETE FROM budgets WHERE id::text = $1::text AND user_id = $2', [id, userId]);
 
     return NextResponse.json({ success: true });
   } catch (error: any) {

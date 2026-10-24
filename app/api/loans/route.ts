@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
+import { getSessionUser } from '@/lib/auth';
 
 async function ensureLoansTable(client: any) {
   await client.query(`
     CREATE TABLE IF NOT EXISTS loans (
       id UUID PRIMARY KEY,
+      user_id UUID,
       name VARCHAR(255) NOT NULL,
       type VARCHAR(50) NOT NULL DEFAULT 'borrowed',
       lender VARCHAR(255) NOT NULL,
@@ -17,18 +19,32 @@ async function ensureLoansTable(client: any) {
       status VARCHAR(50) NOT NULL DEFAULT 'active',
       created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
     );
+
+    DO $$ 
+    BEGIN 
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'loans' AND column_name = 'user_id'
+      ) THEN 
+        ALTER TABLE loans ADD COLUMN user_id UUID; 
+      END IF; 
+    END $$;
   `);
 }
 
 // 1. GET: Fetch all loans
-export async function GET() {
+export async function GET(request: Request) {
   let client;
   try {
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
     await ensureLoansTable(client);
 
     const result = await client.query(
-      'SELECT * FROM loans ORDER BY created_at DESC'
+      'SELECT * FROM loans WHERE user_id = $1 ORDER BY created_at DESC',
+      [userId]
     );
     return NextResponse.json(result.rows || []);
   } catch (error: any) {
@@ -67,6 +83,9 @@ export async function POST(request: Request) {
       );
     }
 
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     const id = crypto.randomUUID();
     const remaining = remaining_amount !== undefined ? remaining_amount : principal_amount;
 
@@ -75,11 +94,12 @@ export async function POST(request: Request) {
 
     const result = await client.query(
       `INSERT INTO loans (
-        id, name, type, lender, principal_amount, remaining_amount, 
+        id, user_id, name, type, lender, principal_amount, remaining_amount, 
         interest_rate, monthly_emi, start_date, end_date, status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
       [
         id,
+        userId,
         name.trim(),
         type,
         lender ? lender.trim() : 'Bank / Lender',
@@ -129,13 +149,16 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: 'Missing loan ID' }, { status: 400 });
     }
 
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
     await ensureLoansTable(client);
 
     let updatedRow;
 
     if (payment_made !== undefined) {
-      const currentRes = await client.query('SELECT remaining_amount FROM loans WHERE id::text = $1::text', [id]);
+      const currentRes = await client.query('SELECT remaining_amount FROM loans WHERE id::text = $1::text AND user_id = $2', [id, userId]);
       if (currentRes.rows.length === 0) {
         return NextResponse.json({ error: 'Loan not found' }, { status: 404 });
       }
@@ -144,8 +167,8 @@ export async function PATCH(request: Request) {
       const newStatus = newRemaining === 0 ? 'paid_off' : 'active';
 
       const updateRes = await client.query(
-        'UPDATE loans SET remaining_amount = $1, status = $2 WHERE id::text = $3::text RETURNING *',
-        [newRemaining, newStatus, id]
+        'UPDATE loans SET remaining_amount = $1, status = $2 WHERE id::text = $3::text AND user_id = $4 RETURNING *',
+        [newRemaining, newStatus, id, userId]
       );
       updatedRow = updateRes.rows[0];
     } else {
@@ -162,7 +185,7 @@ export async function PATCH(request: Request) {
            start_date = COALESCE($8, start_date),
            end_date = $9,
            status = COALESCE($10, status)
-         WHERE id::text = $11::text 
+         WHERE id::text = $11::text AND user_id = $12
          RETURNING *`,
         [
           name !== undefined ? name.trim() : null,
@@ -176,6 +199,7 @@ export async function PATCH(request: Request) {
           end_date || null,
           status !== undefined ? status : null,
           id,
+          userId,
         ]
       );
 
@@ -208,8 +232,11 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: 'Missing loan ID' }, { status: 400 });
     }
 
+    const authUser = await getSessionUser(request);
+    const userId = authUser ? authUser.id : 'bd585d75-ba13-40a0-87c0-e58c45f1aa68';
+
     client = await pool.connect();
-    await client.query('DELETE FROM loans WHERE id::text = $1::text', [id]);
+    await client.query('DELETE FROM loans WHERE id::text = $1::text AND user_id = $2', [id, userId]);
 
     return NextResponse.json({ success: true });
   } catch (error: any) {

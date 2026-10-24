@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { pool } from '@/lib/db';
 import { ensureAuthTables, generate2FAOTP, maskContact } from '@/lib/auth';
+import { send2FAEmail } from '@/lib/email';
 
 export async function POST(request: Request) {
   let client;
@@ -52,6 +53,10 @@ export async function POST(request: Request) {
        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [otpId, user.id, otpCode, destination, method, purpose, expiresAt]
     );
+
+    if (method === 'email' || !user.phone) {
+      await send2FAEmail(destination, otpCode, user.name);
+    }
 
     console.log(`[Fundflow 2FA Security] Dispatched new OTP for ${user.email} (${method} -> ${destination}): ${otpCode}`);
 
