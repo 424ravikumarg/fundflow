@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import ViewDocumentModal from "../components/ViewDocumentModal";
+import ParseStatementModal from "../components/ParseStatementModal";
 
 interface DocumentItem {
   id: string;
@@ -17,6 +18,7 @@ export default function DocumentsPage() {
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [selectedDoc, setSelectedDoc] = useState<DocumentItem | null>(null);
+  const [parsingDoc, setParsingDoc] = useState<DocumentItem | null>(null);
 
   const fetchDocuments = async () => {
     try {
@@ -132,6 +134,7 @@ export default function DocumentsPage() {
                   <th className="p-4">Size</th>
                   <th className="p-4">Date Uploaded</th>
                   <th className="p-4 text-center">Extracted Text</th>
+                  <th className="p-4 text-center">Ledger Parsing</th>
                   <th className="p-4 text-center">Action</th>
                 </tr>
               </thead>
@@ -164,9 +167,17 @@ export default function DocumentsPage() {
                     <td className="p-4 text-center">
                       <button
                         onClick={() => setSelectedDoc(doc)}
-                        className="bg-[#6558D3]/10 hover:bg-[#6558D3]/20 text-[#6558D3] px-3 py-1 rounded-full text-xs font-semibold transition cursor-pointer flex items-center gap-1 mx-auto"
+                        className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded-full text-xs font-medium transition cursor-pointer flex items-center gap-1 mx-auto"
                       >
-                        <span>👁️</span> View Extracted Content
+                        <span>👁️</span> Raw Text
+                      </button>
+                    </td>
+                    <td className="p-4 text-center">
+                      <button
+                        onClick={() => setParsingDoc(doc)}
+                        className="bg-[#6558D3] hover:bg-[#5244bd] text-white px-3.5 py-1 rounded-full text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 mx-auto shadow-2xs"
+                      >
+                        <span>⚡</span> Parse Transactions
                       </button>
                     </td>
                     <td className="p-4 text-center">
@@ -189,6 +200,15 @@ export default function DocumentsPage() {
         isOpen={Boolean(selectedDoc)}
         document={selectedDoc}
         onClose={() => setSelectedDoc(null)}
+      />
+
+      <ParseStatementModal
+        isOpen={Boolean(parsingDoc)}
+        document={parsingDoc}
+        onClose={() => setParsingDoc(null)}
+        onImportSuccess={() => {
+          fetchDocuments();
+        }}
       />
     </div>
   );

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import AddSubscriptionModal, { SubscriptionFormData } from "../components/AddSubscriptionModal";
 import { useCurrency } from "../context/CurrencyContext";
 
@@ -92,12 +93,20 @@ export default function SubscriptionsPage() {
             Track fixed monthly and annual commitments, renewals, and software fees.
           </p>
         </div>
-        <button
-          onClick={handleOpenAdd}
-          className="bg-[#6558D3] hover:bg-[#5244bd] text-white px-5 py-2.5 rounded-full text-sm font-medium transition-colors shadow-sm self-start sm:self-auto cursor-pointer"
-        >
-          + Add subscription
-        </button>
+        <div className="flex items-center gap-3">
+          <Link
+            href="/recurring"
+            className="bg-purple-50 hover:bg-purple-100 text-[#6558D3] border border-purple-200 px-4 py-2 rounded-full text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
+          >
+            <span>⚡</span> Recurring Intelligence & Forecasts
+          </Link>
+          <button
+            onClick={handleOpenAdd}
+            className="bg-[#6558D3] hover:bg-[#5244bd] text-white px-5 py-2.5 rounded-full text-sm font-medium transition-colors shadow-sm self-start sm:self-auto cursor-pointer"
+          >
+            + Add subscription
+          </button>
+        </div>
       </div>
 
       {/* Summary Cards */}
