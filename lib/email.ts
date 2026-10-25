@@ -67,6 +67,9 @@ export async function sendEmail({ to, subject, html, text }: SendEmailOptions): 
           user: process.env.SMTP_USER,
           pass: process.env.SMTP_PASS,
         },
+        tls: {
+          rejectUnauthorized: false,
+        },
       });
 
       await transporter.sendMail({
