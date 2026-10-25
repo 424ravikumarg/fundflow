@@ -7,6 +7,7 @@ interface HealthStatus {
   rds: { status: string; service: string; database: string };
   s3: { status: string; service: string; bucket: string; region: string };
   local?: { status: string; service: string; path: string };
+  email?: { status: string; service: string; provider: string; sender: string };
 }
 
 export default function SettingsPage() {
@@ -22,7 +23,34 @@ export default function SettingsPage() {
   const [currencySaveSuccess, setCurrencySaveSuccess] = useState(false);
   const [storageSaveSuccess, setStorageSaveSuccess] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
+  const [testEmailTarget, setTestEmailTarget] = useState("");
+  const [isTestingEmail, setIsTestingEmail] = useState(false);
+  const [emailTestStatus, setEmailTestStatus] = useState<{ success: boolean; message: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleTestEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!testEmailTarget.trim()) return;
+    setIsTestingEmail(true);
+    setEmailTestStatus(null);
+    try {
+      const res = await fetch("/api/settings/email-test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ testEmail: testEmailTarget.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setEmailTestStatus({ success: true, message: data.message || "Email delivered successfully!" });
+      } else {
+        setEmailTestStatus({ success: false, message: data.error || "Failed to send test email" });
+      }
+    } catch (err: any) {
+      setEmailTestStatus({ success: false, message: err.message || "Network error" });
+    } finally {
+      setIsTestingEmail(false);
+    }
+  };
 
   const fetchSettingsAndHealth = async () => {
     setIsLoadingHealth(true);
@@ -340,7 +368,7 @@ export default function SettingsPage() {
           </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* RDS Health */}
           <div className="p-4 rounded-2xl border border-gray-100 bg-gray-50/50 flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -406,6 +434,57 @@ export default function SettingsPage() {
               ● {health?.s3.status === "connected" ? "Available" : "Optional"}
             </span>
           </div>
+
+          {/* Email Dispatcher Health */}
+          <div className="p-4 rounded-2xl border border-gray-100 bg-gray-50/50 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-purple-50 flex items-center justify-center text-lg">
+                ✉️
+              </div>
+              <div>
+                <p className="text-sm font-bold text-gray-900">Email (OTP / MFA)</p>
+                <p className="text-xs text-gray-400 truncate max-w-[110px]" title={health?.email?.provider || "Console Fallback"}>
+                  {health?.email?.provider || "Console Fallback"}
+                </p>
+              </div>
+            </div>
+            <span
+              className={`text-xs font-bold px-3 py-1 rounded-full ${
+                health?.email?.status === "connected"
+                  ? "bg-emerald-50 text-emerald-600 border border-emerald-200"
+                  : "bg-amber-50 text-amber-600 border border-amber-200"
+              }`}
+            >
+              ● {health?.email?.status === "connected" ? "Live SMTP" : "Fallback"}
+            </span>
+          </div>
+        </div>
+
+        {/* Quick Email Dispatcher Test Box */}
+        <div className="pt-3 border-t border-gray-100">
+          <form onSubmit={handleTestEmail} className="flex flex-col sm:flex-row gap-2 items-start sm:items-center">
+            <div className="flex-1 w-full sm:w-auto">
+              <input
+                type="email"
+                value={testEmailTarget}
+                onChange={(e) => setTestEmailTarget(e.target.value)}
+                placeholder="Enter email to test OTP delivery (e.g. ravikumar.g@outlook.com)"
+                className="w-full px-3.5 py-2 border border-gray-200 rounded-xl text-xs font-medium outline-none focus:ring-2 focus:ring-[#6558D3]/30"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={isTestingEmail || !testEmailTarget.trim()}
+              className="bg-[#6558D3] hover:bg-[#5244bd] text-white px-4 py-2 rounded-xl text-xs font-bold transition shadow-xs cursor-pointer disabled:opacity-50 whitespace-nowrap"
+            >
+              {isTestingEmail ? "Testing..." : "Send Test Email"}
+            </button>
+          </form>
+          {emailTestStatus && (
+            <p className={`text-xs mt-2 font-semibold ${emailTestStatus.success ? "text-emerald-600" : "text-amber-700"}`}>
+              {emailTestStatus.success ? "✓ " : "⚠️ "} {emailTestStatus.message}
+            </p>
+          )}
         </div>
       </div>
 

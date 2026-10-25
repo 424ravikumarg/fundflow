@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
 import { S3Client, HeadBucketCommand } from '@aws-sdk/client-s3';
+import { isEmailConfigured, getEmailProviderInfo } from '@/lib/email';
 import fs from 'fs';
 import path from 'path';
 
@@ -141,6 +142,12 @@ export async function GET() {
         status: localStatus,
         service: 'Local On-Device Storage',
         path: localStoragePath,
+      },
+      email: {
+        status: isEmailConfigured() ? 'connected' : 'unconfigured',
+        service: 'Email Dispatcher',
+        provider: getEmailProviderInfo().provider,
+        sender: getEmailProviderInfo().sender,
       },
     },
   });

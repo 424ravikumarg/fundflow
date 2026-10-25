@@ -11,7 +11,48 @@ export interface SendEmailOptions {
   text?: string;
 }
 
-export async function sendEmail({ to, subject, html, text }: SendEmailOptions): Promise<{ success: boolean; error?: string }> {
+export function isEmailConfigured(): boolean {
+  return Boolean(
+    (process.env.SMTP_HOST && process.env.SMTP_USER) ||
+    process.env.RESEND_API_KEY ||
+    process.env.SENDGRID_API_KEY
+  );
+}
+
+export function getEmailProviderInfo() {
+  if (process.env.SMTP_HOST && process.env.SMTP_USER) {
+    return {
+      configured: true,
+      provider: `SMTP (${process.env.SMTP_HOST})`,
+      host: process.env.SMTP_HOST,
+      user: process.env.SMTP_USER,
+      sender: process.env.EMAIL_FROM || process.env.SMTP_USER,
+    };
+  }
+  if (process.env.RESEND_API_KEY) {
+    return {
+      configured: true,
+      provider: 'Resend API',
+      sender: process.env.EMAIL_FROM || 'onboarding@resend.dev',
+    };
+  }
+  if (process.env.SENDGRID_API_KEY) {
+    return {
+      configured: true,
+      provider: 'SendGrid API',
+      sender: process.env.EMAIL_FROM || 'security@fundflow.app',
+    };
+  }
+  return {
+    configured: false,
+    provider: 'None (Console Fallback)',
+    sender: 'Not configured',
+  };
+}
+
+export async function sendEmail({ to, subject, html, text }: SendEmailOptions): Promise<{ success: boolean; delivered: boolean; error?: string }> {
+  let lastError = '';
+
   // 1. Try SMTP via Nodemailer if configured
   if (process.env.SMTP_HOST && process.env.SMTP_USER) {
     try {
@@ -37,8 +78,9 @@ export async function sendEmail({ to, subject, html, text }: SendEmailOptions): 
       });
 
       console.log(`[Fundflow Email] Sent email via SMTP (${process.env.SMTP_HOST}) to ${to}`);
-      return { success: true };
+      return { success: true, delivered: true };
     } catch (err: any) {
+      lastError = `SMTP dispatch failed: ${err.message}`;
       console.warn('[Fundflow Email] SMTP dispatch failed:', err.message);
     }
   }
@@ -53,7 +95,7 @@ export async function sendEmail({ to, subject, html, text }: SendEmailOptions): 
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          from: process.env.EMAIL_FROM || 'Fundflow Security <security@fundflow.app>',
+          from: process.env.EMAIL_FROM || 'Fundflow Security <onboarding@resend.dev>',
           to,
           subject,
           html,
@@ -62,9 +104,12 @@ export async function sendEmail({ to, subject, html, text }: SendEmailOptions): 
       });
       if (res.ok) {
         console.log(`[Fundflow Email] Sent email via Resend to ${to}`);
-        return { success: true };
+        return { success: true, delivered: true };
       }
+      const data = await res.json().catch(() => ({}));
+      lastError = `Resend failed: ${data.message || res.statusText}`;
     } catch (err: any) {
+      lastError = `Resend dispatch failed: ${err.message}`;
       console.warn('[Fundflow Email] Resend dispatch failed:', err.message);
     }
   }
@@ -90,27 +135,30 @@ export async function sendEmail({ to, subject, html, text }: SendEmailOptions): 
       });
       if (res.ok) {
         console.log(`[Fundflow Email] Sent email via SendGrid to ${to}`);
-        return { success: true };
+        return { success: true, delivered: true };
       }
+      lastError = `SendGrid failed with status ${res.status}`;
     } catch (err: any) {
+      lastError = `SendGrid dispatch failed: ${err.message}`;
       console.warn('[Fundflow Email] SendGrid dispatch failed:', err.message);
     }
   }
 
   // 4. Fallback: Log formatted 2FA email to server console
   console.log('====================================================');
-  console.log(`📨 [Fundflow 2FA Email] Dispatching to: ${to}`);
+  console.log(`📨 [Fundflow 2FA Email] Console Fallback for: ${to}`);
   console.log(`📌 Subject: ${subject}`);
   if (text) console.log(`💬 Message: ${text}`);
+  if (lastError) console.log(`⚠️ Previous Delivery Error: ${lastError}`);
   console.log('====================================================');
 
-  return { success: true };
+  return { success: true, delivered: false, error: lastError };
 }
 
 /**
  * Generates and sends a 2FA One-Time Password (OTP) verification email
  */
-export async function send2FAEmail(toEmail: string, otpCode: string, userName?: string): Promise<{ success: boolean; error?: string }> {
+export async function send2FAEmail(toEmail: string, otpCode: string, userName?: string): Promise<{ success: boolean; delivered: boolean; error?: string }> {
   const subject = `Your Fundflow Verification Code: ${otpCode}`;
 
   const html = `

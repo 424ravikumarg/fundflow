@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { pool } from '@/lib/db';
 import { ensureAuthTables, generate2FAOTP, maskContact } from '@/lib/auth';
-import { send2FAEmail } from '@/lib/email';
+import { send2FAEmail, isEmailConfigured } from '@/lib/email';
 
 export async function POST(request: Request) {
   let client;
@@ -54,9 +54,13 @@ export async function POST(request: Request) {
       [otpId, user.id, otpCode, destination, method, purpose, expiresAt]
     );
 
+    let dispatchResult: { success: boolean; delivered: boolean; error?: string } = { success: true, delivered: false };
     if (method === 'email' || !user.phone) {
-      await send2FAEmail(destination, otpCode, user.name);
+      dispatchResult = await send2FAEmail(destination, otpCode, user.name);
     }
+
+    const emailConfigured = isEmailConfigured();
+    const shouldExposeOtp = !emailConfigured || !dispatchResult.delivered || process.env.NODE_ENV !== 'production';
 
     console.log(`[Fundflow 2FA Security] Dispatched new OTP for ${user.email} (${method} -> ${destination}): ${otpCode}`);
 
@@ -64,8 +68,13 @@ export async function POST(request: Request) {
       success: true,
       method,
       maskedDestination: maskContact(destination, method),
-      message: `A new 6-digit code was sent to ${maskContact(destination, method)}.`,
-      debugOtp: process.env.NODE_ENV !== 'production' ? otpCode : undefined,
+      emailConfigured,
+      message: emailConfigured
+        ? (dispatchResult.delivered
+            ? `A new 6-digit code was sent to ${maskContact(destination, method)}.`
+            : `Email dispatch failed: ${dispatchResult.error || 'Server cannot deliver email'}. Use code below.`)
+        : `Live email (SMTP) is not configured yet on server. Verification code: ${otpCode}`,
+      debugOtp: shouldExposeOtp ? otpCode : undefined,
     });
   } catch (err: any) {
     console.error('Request OTP Error:', err);

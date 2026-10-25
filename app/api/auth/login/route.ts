@@ -7,7 +7,7 @@ import {
   generate2FAOTP,
   maskContact,
 } from '@/lib/auth';
-import { send2FAEmail } from '@/lib/email';
+import { send2FAEmail, isEmailConfigured } from '@/lib/email';
 
 export async function POST(request: Request) {
   let client;
@@ -61,15 +61,22 @@ export async function POST(request: Request) {
       );
 
       // Dispatch real email via Nodemailer/SMTP
-      await send2FAEmail(cleanEmail, otpCode, user.name);
+      const dispatchResult = await send2FAEmail(cleanEmail, otpCode, user.name);
+      const emailConfigured = isEmailConfigured();
+      const shouldExposeOtp = !emailConfigured || !dispatchResult.delivered || process.env.NODE_ENV !== 'production';
 
       return NextResponse.json({
         requires2FA: true,
         userId: user.id,
         method: 'email',
         maskedDestination: maskContact(cleanEmail, 'email'),
-        message: `A 6-digit login verification code was sent to ${maskContact(cleanEmail, 'email')}.`,
-        debugOtp: process.env.NODE_ENV !== 'production' ? otpCode : undefined,
+        emailConfigured,
+        message: emailConfigured
+          ? (dispatchResult.delivered
+              ? `A 6-digit login verification code was sent to ${maskContact(cleanEmail, 'email')}.`
+              : `Email dispatch failed: ${dispatchResult.error || 'Server cannot deliver email'}. Use code below.`)
+          : `Live email (SMTP) is not configured yet on server. Verification code: ${otpCode}`,
+        debugOtp: shouldExposeOtp ? otpCode : undefined,
       });
     }
 
@@ -112,9 +119,13 @@ export async function POST(request: Request) {
       );
 
       // Dispatch real email via Nodemailer/SMTP
+      let dispatchResult: { success: boolean; delivered: boolean; error?: string } = { success: true, delivered: false };
       if (method === 'email' || !user.phone) {
-        await send2FAEmail(destination, otpCode, user.name);
+        dispatchResult = await send2FAEmail(destination, otpCode, user.name);
       }
+
+      const emailConfigured = isEmailConfigured();
+      const shouldExposeOtp = !emailConfigured || !dispatchResult.delivered || process.env.NODE_ENV !== 'production';
 
       console.log(`[Fundflow 2FA Security] Generated OTP for user ${user.email} (${method} -> ${destination}): ${otpCode}`);
 
@@ -123,8 +134,13 @@ export async function POST(request: Request) {
         userId: user.id,
         method,
         maskedDestination: maskContact(destination, method),
-        message: `A 6-digit verification code was sent to your ${method === 'mobile' ? 'mobile number' : 'email address'}.`,
-        debugOtp: process.env.NODE_ENV !== 'production' ? otpCode : undefined,
+        emailConfigured,
+        message: emailConfigured
+          ? (dispatchResult.delivered
+              ? `A 6-digit verification code was sent to your ${method === 'mobile' ? 'mobile number' : 'email address'}.`
+              : `Email dispatch failed: ${dispatchResult.error || 'Server cannot deliver email'}. Use code below.`)
+          : `Live email (SMTP) is not configured yet on server. Verification code: ${otpCode}`,
+        debugOtp: shouldExposeOtp ? otpCode : undefined,
       });
     }
 
